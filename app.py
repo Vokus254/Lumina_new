@@ -153,32 +153,45 @@ elif phase == "5: Abschluss prüfen":
         df = st.session_state['susa_data'].copy()
         # Spaltennamen säubern
         df.columns = [str(c).strip() for c in df.columns]
-        ausweis_cols = [c for c in df.columns if 'Ausweis' in c]
+        
+        # --- DYNAMISCHE SPALTEN-SUCHE ---
+        # Wir suchen die Spalten, die 'Ausweis_1', 'Ausweis_2' usw. ENTHALTEN
+        def find_dynamic_col(name):
+            return next((c for c in df.columns if name.lower() in c.lower()), None)
+        
+        a1_col = find_dynamic_col('Ausweis_1')
+        a2_col = find_dynamic_col('Ausweis_2')
+        ausweis_cols = [c for c in df.columns if 'ausweis' in c.lower()]
         wert_cols = [c for c in df.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
         
-        if ausweis_cols and wert_cols:
-            saldo_akt = wert_cols[-1] # Das aktuellste Jahr
+        if a1_col and wert_cols:
+            saldo_akt = wert_cols[-1]
             
             # --- 1. Kennzahlen-Leiste ---
-            bilanzsumme = df[df['Ausweis_2'].str.contains('Aktiva', na=False)][saldo_akt].sum()
-            guv_ergebnis = df[df['Ausweis_1'].str.contains('GuV', na=False)][saldo_akt].sum() * -1
+            # Bilanzsumme: Wir filtern dort, wo Ebene 2 'Aktiva' enthält
+            mask_aktiva = df[a2_col].str.contains('Aktiva', na=False) if a2_col else pd.Series(False, index=df.index)
+            bilanzsumme = df[mask_aktiva][saldo_akt].sum()
+            
+            # GuV: Wir filtern dort, wo Ebene 1 'GuV' enthält
+            mask_guv = df[a1_col].str.contains('GuV', na=False)
+            guv_ergebnis = df[mask_guv][saldo_akt].sum() * -1
             
             col1, col2, col3 = st.columns(3)
             col1.metric("Bilanzsumme", f"{bilanzsumme:,.2f} €")
-            col2.metric("Jahresergebnis (GuV)", f"{guv_ergebnis:,.2f} €", delta_color="normal")
+            col2.metric("Jahresergebnis (GuV)", f"{guv_ergebnis:,.2f} €")
             col3.metric("Differenz (Soll/Haben)", f"{df[saldo_akt].sum():,.2f} €")
 
             st.divider()
 
             # --- 2. Interaktiver Drill-Down ---
-            st.subheader("Bilanz-Gliederung (Ebene 1-5)")
+            st.subheader("Bilanz-Gliederung")
             
-            # Wir nutzen Expander für die großen Blöcke
-            for ebene1 in df['Ausweis_1'].unique():
+            for ebene1 in df[a1_col].unique():
+                if pd.isna(ebene1): continue
                 with st.expander(f"📂 {ebene1}"):
-                    # Untertabelle für diese Ebene
-                    sub_df = df[df['Ausweis_1'] == ebene1]
-                    pivot = sub_df.groupby(ausweis_cols[1:5])[wert_cols].sum().reset_index()
+                    sub_df = df[df[a1_col] == ebene1]
+                    # Wir gruppieren nach den verfügbaren Ausweis-Spalten (max. 5)
+                    pivot = sub_df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
                     
                     st.dataframe(
                         pivot, 
@@ -186,16 +199,10 @@ elif phase == "5: Abschluss prüfen":
                         use_container_width=True,
                         hide_index=True
                     )
-                    
-                    # Kleiner Info-Text pro Block
-                    summe_block = pivot[saldo_akt].sum()
-                    st.write(f"**Gesamtsumme {ebene1}: {summe_block:,.2f} €**")
-
         else:
-            st.error("Strukturdaten oder Salden konnten nicht identifiziert werden.")
+            st.error("Struktur-Spalten (Ausweis) konnten nicht eindeutig identifiziert werden.")
     else:
         st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
-
 
 elif phase == "6: Export & Versand":
     st.header("Phase 6: Finaler Export")
