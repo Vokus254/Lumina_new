@@ -41,46 +41,45 @@ elif phase == "3: Zahlen hochladen (SuSa)":
     st.header("Phase 3: Master-Mapping & SuSa")
     col1, col2 = st.columns(2)
     with col1:
-        map_file = st.file_uploader("Master-Mapping Excel", type=["xlsx"], key="map")
+        map_file = st.file_uploader("1. Master-Mapping Excel", type=["xlsx"])
     with col2:
-        susa_file = st.file_uploader("Mandanten-SuSa Excel", type=["xlsx"], key="susa")
+        susa_file = st.file_uploader("2. Mandanten-SuSa Excel", type=["xlsx"])
 
     if map_file and susa_file:
-        # 1. Master-Mapping einlesen
-        df_map = pd.read_excel(map_file)
-        # 2. SuSa einlesen (wir suchen die Header-Zeile automatisch)
-        df_susa_raw = pd.read_excel(susa_file, header=None)
-        header_idx = 0
-        for i, row in df_susa_raw.head(10).iterrows():
-            if row.astype(str).str.contains('Konto', case=False).any():
-                header_idx = i
-                break
-        df_susa = pd.read_excel(susa_file, header=header_idx)
+        def get_clean_df(file):
+            # Scannt die ersten 10 Zeilen nach dem Wort 'Konto'
+            df_raw = pd.read_excel(file, header=None)
+            header_idx = 0
+            for i, row in df_raw.head(10).iterrows():
+                if row.astype(str).str.contains('Konto', case=False).any():
+                    header_idx = i
+                    break
+            return pd.read_excel(file, header=header_idx)
+
+        df_map = get_clean_df(map_file)
+        df_susa = get_clean_df(susa_file)
         
-        # 3. Spalten-Identifikation
         k_map = next((c for c in df_map.columns if 'konto' in str(c).lower()), None)
         k_susa = next((c for c in df_susa.columns if 'konto' in str(c).lower()), None)
         
         if k_map and k_susa:
-            st.info(f"Verknüpfung: Master({k_map}) ↔ SuSa({k_susa})")
-            
-            # Harmonisierung der Kontonummern
+            # Kontonummern vereinheitlichen
             df_map[k_map] = df_map[k_map].astype(str).str.strip().str.replace('.0', '', regex=False)
             df_susa[k_susa] = df_susa[k_susa].astype(str).str.strip().str.replace('.0', '', regex=False)
             
-            # Merge / Join
+            # Merge
             df_final = pd.merge(df_susa, df_map, left_on=k_susa, right_on=k_map, how='left')
             
-            # Zahlen reinigen
+            # Zahlenreinigung
             wert_cols = [c for c in df_final.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
             for c in wert_cols:
                 df_final[c] = df_final[c].apply(clean_currency)
             
             st.session_state['susa_data'] = df_final
-            st.success(f"Mapping erfolgreich! {len(df_final)} Zeilen verarbeitet.")
+            st.success("Verknüpfung erfolgreich!")
             st.dataframe(df_final.head(10))
         else:
-            st.error(f"Spalten nicht gefunden! Master-Spalten: {list(df_map.columns)} | SuSa-Spalten: {list(df_susa.columns)}")
+            st.error("Konnte Kontospalten nicht finden. Bitte prüfen Sie die Dateien.")
 
 elif phase == "4: Prüfen & Optimieren":
     st.header("Phase 4: Lücken-Analyse")
