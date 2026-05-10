@@ -33,35 +33,54 @@ elif phase == "2: Unternehmen verstehen":
     st.write("LUMINA ermittelt nun Ihre Berichtspflichten gemäß HGB.")
 
 elif phase == "3: Zahlen hochladen (SuSa)":
-    st.header("Phase 3: KI-Mapping")
+    st.header("Phase 3: KI-Mapping (Datenbasis)")
     from mapping import get_hgb_mapping
     
-    uploaded_file = st.file_uploader("SuSa-Excel hochladen", type=["xlsx"])
+    uploaded_file = st.file_uploader("Summen-Salden-Liste (Excel) hochladen", type=["xlsx"])
     
     if uploaded_file:
         import pandas as pd
-        df = pd.read_excel(uploaded_file)
+        # Wir lesen ab Zeile 2 (header=1), damit 'KontoNr' erkannt wird
+        df = pd.read_excel(uploaded_file, header=1)
         
-        # --- INTELLIGENTE SPALTENSUCHE ---
-        # Wir suchen die Spalte, die 'konto' im Namen hat
-        col_map = {col: col.lower() for col in df.columns}
-        konto_col = next((orig for orig, low in col_map.items() if 'konto' in low), None)
+        # Bereinigung: Entferne leere Zeilen und konvertiere KontoNr zu Text
+        df = df.dropna(subset=['KontoNr'])
+        df['KontoNr'] = df['KontoNr'].astype(int).astype(str)
         
-        if konto_col:
-            mapping_tabelle = get_hgb_mapping("SKR03")
-            # Mapping durchführen
-            df['HGB_Position'] = df[konto_col].astype(str).map(mapping_tabelle)
+        # Mapping-Tabelle laden
+        mapping_tabelle = get_hgb_mapping("SKR03")
+        
+        # Mapping durchführen: Wir erstellen die neue Spalte 'HGB_Position'
+        df['HGB_Position'] = df['KontoNr'].map(mapping_tabelle)
+        
+        # Speichern für die nächsten Phasen
+        st.session_state['susa_data'] = df
+        
+        st.success("SuSa erfolgreich eingelesen und gemappt!")
+        
+        # --- VISUALISIERUNG DER ERGEBNISSE ---
+        st.subheader("Vorschau des KI-Mappings")
+        
+        # Wir zeigen nur Zeilen an, die wir erfolgreich zugeordnet haben
+        erkannt = df[df['HGB_Position'].notna()]
+        
+        if not erkannt.empty:
+            # Wir nehmen die Spalte für 2025 (C) für die Anzeige
+            spalte_2025 = "31.12.2025" if "31.12.2025" in df.columns else df.columns[2]
             
-            st.session_state['susa_data'] = df
-            st.success(f"Spalte '{konto_col}' erkannt und gemappt!")
+            st.dataframe(
+                erkannt[['KontoNr', 'Kontobezeichnung', spalte_2025, 'HGB_Position']],
+                column_config={
+                    spalte_2025: st.column_config.NumberColumn("Saldo 2025", format="%.2f €"),
+                    "HGB_Position": "Zugeordnete Bilanzposition"
+                },
+                hide_index=True
+            )
             
-            # Nur Zeilen mit Treffern anzeigen
-            erkannt = df[df['HGB_Position'].notna()]
-            st.dataframe(erkannt[[konto_col, 'HGB_Position']])
+            st.info(f"LUMINA hat {len(erkannt)} Konten automatisch identifiziert.")
         else:
-            st.error("Konnte keine Spalte mit 'Konto' im Namen finden. Vorhanden: " + ", ".join(df.columns))
-            st.info("Bitte stellen Sie sicher, dass eine Spalte 'KontoNr' oder ähnlich heißt.")
-
+            st.warning("Keine Konten automatisch erkannt. Bitte mapping.py prüfen.")
+            st.write("Verfügbare Konten im File:", df['KontoNr'].unique()[:10])
 
 
 elif phase == "4: Prüfen & Optimieren":
