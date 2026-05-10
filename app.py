@@ -121,50 +121,25 @@ elif phase == "4: Prüfen & Optimieren":
 
 
 
-elif phase == "5: Abschluss prüfen":
-    st.header("Phase 5: Die Generalprobe (Struktur-Bilanz)")
-    
-    if 'susa_data' in st.session_state:
-        df = st.session_state['susa_data'].copy()
-        
-        # 1. Saldo-Spalte automatisch finden
-        saldo_col = next((c for c in df.columns if any(x in str(c) for x in ['2025', 'Saldo', '31.12'])), None)
-        
-        if saldo_col:
-            # WICHTIG: Alle Spaltennamen in Text umwandeln (behebt den TypeError)
-            df.columns = [str(c) for c in df.columns]
-            saldo_col_str = str(saldo_col)
-            
-            st.subheader("Aggregierte HGB-Struktur")
-            
-            # 2. Gruppierung über die Ebenen (Ausweis 1 bis 3)
-            ausweis_cols = [c for c in df.columns if 'Ausweis' in c]
-            levels = ausweis_cols[:3] 
-            
-            # Nur Konten nehmen, die gemappt sind
-            gemappt = df[df[ausweis_cols[0]] != "Nicht zugeordnet"].copy()
-            
-            if not gemappt.empty:
-                # Hierarchische Summe bilden
-                pivot = gemappt.groupby(levels)[saldo_col_str].sum().reset_index()
-                
-                # Schöne Tabelle anzeigen (jetzt sicher vor Fehlern)
-                st.dataframe(
-                    pivot,
-                    column_config={saldo_col_str: st.column_config.NumberColumn("Saldo (€)", format="%.2f €")},
-                    hide_index=True,
-                    use_container_width=True
-                )
-                
-                # 3. Gesamtsumme (Aktiva-Check)
-                gesamt = gemappt[saldo_col_str].sum()
-                st.metric("Vorläufige Bilanzsumme (gemappt)", f"{gesamt:,.2f} €")
-            else:
-                st.warning("Noch keine Konten erfolgreich gemappt.")
-        else:
-            st.error("Keine Saldo-Spalte für die Berechnung gefunden.")
-    else:
-        st.warning("Bitte laden Sie in Phase 3 die Dateien hoch.")
+# In Phase 5 der app.py anpassen:
+
+# 1. Wir berechnen den Saldo fachgerecht:
+# Aktiva-Konten (0-2) behalten ihr Vorzeichen
+# Passiva/Erlös-Konten (3-4, 8) müssen oft für die Darstellung gedreht werden
+def berechne_bilanzwert(row, col):
+    wert = row[col]
+    # Einfache Logik: Wenn Ausweis_2 'Passiva' oder 'GuV' ist, 
+    # und der Wert negativ ist, machen wir ihn für die Ansicht positiv.
+    if "Passiva" in str(row['Ausweis_2']) or "GuV" in str(row['Ausweis_2']):
+        return wert * -1
+    return wert
+
+for col in wert_cols:
+    df[f"{col}_final"] = df.apply(lambda r: berechne_bilanzwert(r, col), axis=1)
+
+# 2. Jetzt gruppieren wir über die NEUEN finalen Spalten
+final_wert_cols = [f"{c}_final" for c in wert_cols]
+pivot = gemappt.groupby(levels)[final_wert_cols].sum().reset_index()
 
 
 elif phase == "6: Export & Versand":
