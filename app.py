@@ -584,7 +584,12 @@ def save_mapping_to_supabase(mapping: pd.DataFrame, mapping_name: str = DEFAULT_
             sb.table("master_mapping").upsert(rows, on_conflict="mapping_name,konto_nr").execute()
         except Exception as e:
             if mapping_name.strip() and mapping_name.strip() != DEFAULT_MAPPING_NAME:
-                return f"Supabase-Speichern fehlgeschlagen: Für mehrere Master-Mappings muss 'mapping_name' mit eindeutigem Schlüssel vorhanden sein. Details: {e}"
+                return (
+                    "Supabase-Speichern fehlgeschlagen: Für mehrere Master-Mappings muss in Supabase "
+                    "die Migration 'supabase_master_mapping_migration.sql' ausgeführt werden. "
+                    "Aktuell ist vermutlich noch 'konto_nr' alleiniger Primärschlüssel. "
+                    f"Details: {e}"
+                )
             legacy_rows = [{k: v for k, v in row.items() if k != "mapping_name"} for row in rows]
             sb.table("master_mapping").upsert(legacy_rows, on_conflict="konto_nr").execute()
         return None
