@@ -291,21 +291,43 @@ def load_mapping_from_supabase():
     sb = get_supabase_client()
     if sb is None:
         return None, "Supabase ist nicht verbunden. Prüfe Streamlit Secrets."
+
     try:
-        res = (
-    sb.table("master_mapping")
-    .select("*")
-    .order("konto_nr")
-    .range(0, 10000)
-    .execute()
-)
-        df = pd.DataFrame(res.data)
+        all_rows = []
+        page_size = 1000
+        start = 0
+
+        while True:
+            end = start + page_size - 1
+
+            res = (
+                sb.table("master_mapping")
+                .select("*")
+                .order("konto_nr")
+                .range(start, end)
+                .execute()
+            )
+
+            rows = res.data or []
+            all_rows.extend(rows)
+
+            if len(rows) < page_size:
+                break
+
+            start += page_size
+
+        df = pd.DataFrame(all_rows)
+
         if df.empty:
             return None, "Tabelle master_mapping ist leer."
+
         df = df.rename(columns={"konto_nr": "KontoNr"})
+
         for i in range(1, 8):
             df = df.rename(columns={f"ausweis_{i}": f"Ausweis_{i}"})
+
         return normalize_mapping(df), None
+
     except Exception as e:
         return None, f"Supabase-Laden fehlgeschlagen: {e}"
 
