@@ -171,39 +171,62 @@ elif phase == "6: Export & Versand":
     st.header("Phase 6: Finaler Export & Bericht")
     
     if 'susa_data' in st.session_state:
-        df = st.session_state['susa_data']
-        gemappt = df[df['Ausweis_4'] != "Nicht zugeordnet"]
+        df = st.session_state['susa_data'].copy()
+        df.columns = [str(c) for c in df.columns]
+        saldo_col = next((c for c in df.columns if any(x in str(c) for x in ['2025', 'Saldo', '31.12'])), None)
         
-        st.subheader("Ihr LUMINA-Abschlussbericht")
-        st.write("Der Bericht enthält den Audit-Trail und die aggregierte HGB-Bilanz.")
-        
-        # Erstellung eines einfachen Text-Berichts für den Download
-        bilanz_sum = gemappt.iloc[:, 2].sum()
-        report_content = f"""
-        LUMINA ABSCHLUSS-BERICHT 2025
-        =============================
-        Mandant: Beispiel GmbH
-        Datum: 10.05.2026
-        
-        BILANZ-ERGEBNIS (AKTIVA):
-        Gesamtsumme: {bilanz_sum:,.2f} €
-        
-        POSITIONEN:
-        """
-        for _, row in gemappt.groupby('Ausweis_4').sum(numeric_only=True).iterrows():
-            report_content += f"\n- {row.name}: {row.iloc[0]:,.2f} €"
+        ausweis_cols = [c for c in df.columns if 'Ausweis' in c]
+        gemappt = df[df[ausweis_cols] != "Nicht zugeordnet"].copy()
+
+        if not gemappt.empty:
+            export_df = gemappt.groupby(ausweis_cols[:5])[saldo_col].sum().reset_index()
             
-        st.download_button(
-            label="📥 Bericht als Text-Datei herunterladen",
-            data=report_content,
-            file_name="Lumina_Abschluss_2025.txt",
-            mime="text/plain"
-        )
-        
-        st.success("Bericht wurde erfolgreich generiert. Sie können diesen nun an Ihre Bank oder Ihren Steuerberater übermitteln.")
-        st.balloons()
+            # --- EXCEL EXPORT ---
+            import io
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                export_df.to_excel(writer, index=False, sheet_name='LUMINA_Abschluss')
+            
+            st.download_button(
+                label="📥 Als Excel (.xlsx) herunterladen",
+                data=buffer.getvalue(),
+                file_name="LUMINA_Abschluss_2025.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+            # --- PDF EXPORT ---
+            from fpdf import FPDF
+            
+            class PDF(FPDF):
+                def header(self):
+                    self.set_font('Arial', 'B', 16)
+                    self.cell(0, 10, 'LUMINA Abschlussbericht 2025', ln=True, align='C')
+                    self.ln(10)
+
+            pdf = PDF()
+            pdf.add_page()
+            pdf.set_font("Arial", size=10)
+            
+            pdf.cell(0, 10, f"Mandant: Beispiel GmbH", ln=True)
+            pdf.cell(0, 10, f"Erstellungsdatum: 10.05.2026", ln=True)
+            pdf.ln(5)
+            
+            # Tabelle in PDF schreiben
+            for index, row in export_df.iterrows():
+                line = f"{row[0]} | {row[1]} | {row[2]} | {row[-1]:,.2f} €"
+                pdf.cell(0, 8, line.encode('latin-1', 'replace').decode('latin-1'), ln=True)
+
+            pdf_output = pdf.output()
+            st.download_button(
+                label="📄 Als PDF-Protokoll herunterladen",
+                data=bytes(pdf_output),
+                file_name="LUMINA_Protokoll.pdf",
+                mime="application/pdf"
+            )
+            
+            st.balloons()
     else:
-        st.warning("Bitte schließen Sie zuerst Phase 3 bis 5 ab.")
+        st.warning("Bitte laden Sie in Phase 3 die Dateien hoch.")
 
 
 
