@@ -15,10 +15,11 @@ streamlit run app.py
 2. Mandanten-Onboarding und Reporting-Profil pflegen.
 3. Master-Mapping auswaehlen, hochladen oder aus Supabase laden.
 4. Eine oder mehrere SuSa-Dateien je Gesellschaft/Einheit hochladen.
-5. Mapping starten und Klaerungsposten pruefen.
-6. Abschlussansicht kontrollieren.
-7. KI-Interpretation fuer Management, Anhang, Lagebericht, Rueckfragen oder Pruefungsnotiz erzeugen.
-8. Excel-Export erzeugen.
+5. Onboarding wahlweise manuell oder per Excel-Upload pflegen.
+6. Mapping starten und Klaerungsposten pruefen.
+7. Abschlussansicht kontrollieren.
+8. KI-Interpretation fuer Management, Anhang, Lagebericht, Rueckfragen oder Pruefungsnotiz erzeugen.
+9. Excel-Export erzeugen.
 
 Wenn kein Master-Mapping vorhanden ist, nutzt die App lokale Fallback-Regeln aus `mapping.py`. Diese Treffer werden als `Vorschlag` markiert und sollten fachlich geprueft werden, bevor sie dauerhaft ins Master-Mapping uebernommen werden.
 
@@ -55,6 +56,10 @@ Die Seite `Mandanten` zeigt eine Matrix:
 Mandant | Jahr | Gesellschaft | SuSa vorhanden | Mapping vorhanden | Onboarding vorhanden | KI-Erlaeuterung vorhanden | Status.
 
 Der aktive Mandant, das aktive Jahr und die aktive Einheit werden in Sidebar und Header angezeigt.
+
+## Onboarding per Excel
+
+Auf der Seite `Onboarding` kann eine Excel-Datei mit den Spalten `Mandant`, `Gesellschaft`, `Smart Interview` und `Antwort` hochgeladen werden. Abschnittszeilen wie `A. Stammdaten` werden erkannt; die darunterliegenden Fragen werden mit ihren Antworten gespeichert. Fehlende Gesellschaften koennen beim Import automatisch angelegt werden.
 
 ## Streamlit Secrets
 

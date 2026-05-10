@@ -1426,6 +1426,160 @@ def export_context_sheets() -> dict[str, pd.DataFrame]:
     return sheets
 
 
+def onboarding_template_bytes() -> bytes:
+    rows = []
+    mandant = mandant_display_name()
+    entity = st.session_state.get("active_entity_name") or "Gesellschaft 1"
+    for section, questions in ONBOARDING_SECTIONS.items():
+        rows.append({"Mandant": mandant, "Gesellschaft": entity, "Smart Interview": section, "Antwort": ""})
+        for question in questions:
+            rows.append({"Mandant": mandant, "Gesellschaft": entity, "Smart Interview": question, "Antwort": ""})
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        pd.DataFrame(rows).to_excel(writer, sheet_name="Onboarding", index=False)
+        ws = writer.book["Onboarding"]
+        ws.freeze_panes = "A2"
+        for col in ["A", "B", "C", "D"]:
+            ws.column_dimensions[col].width = 28 if col in ["A", "B"] else 80
+    return buffer.getvalue()
+
+
+def _excel_col(df: pd.DataFrame, *names: str) -> str | None:
+    wanted = {name.strip().lower() for name in names}
+    for col in df.columns:
+        norm = str(col).strip().lower()
+        if norm in wanted:
+            return col
+    return None
+
+
+def import_onboarding_excel(
+    uploaded_file,
+    create_missing_entities: bool = True,
+    force_active_mandant: bool = True,
+) -> tuple[int, int, list[str], str | None]:
+    try:
+        df = read_excel_smart(uploaded_file)
+    except Exception as e:
+        return 0, 0, [], f"Excel konnte nicht gelesen werden: {e}"
+
+    mandant_col = _excel_col(df, "Mandant", "Mandantenname")
+    entity_col = _excel_col(df, "Gesellschaft", "Einheit", "Gesellschaft/Einheit")
+    question_col = _excel_col(df, "Smart Interview", "Frage", "Question")
+    answer_col = _excel_col(df, "Antwort", "Answer")
+    if question_col is None or answer_col is None:
+        return 0, 0, [], "Die Excel braucht mindestens die Spalten 'Smart Interview' und 'Antwort'."
+
+    mandants, mandant_err = load_mandants()
+    if mandant_err:
+        return 0, 0, [], mandant_err
+    mandant_lookup = {mandant_display_name(m).strip().lower(): m for m in mandants}
+    active_mandant = st.session_state.get("active_mandant", {})
+    active_mandant_id = st.session_state.get("active_mandant_id")
+    active_mandant_name = mandant_display_name(active_mandant).strip().lower()
+    current_section = ""
+    entity_cache: dict[tuple[str, str], dict] = {}
+    rows = []
+    created_entities = []
+
+    section_names = {section.strip(): section for section in ONBOARDING_SECTIONS.keys()}
+    all_questions = {
+        question.strip(): section
+        for section, questions in ONBOARDING_SECTIONS.items()
+        for question in questions
+    }
+
+    for _, line in df.iterrows():
+        smart_text = str(line.get(question_col, "")).strip()
+        if not smart_text or smart_text.lower() == "nan":
+            continue
+
+        if smart_text in section_names:
+            current_section = section_names[smart_text]
+            continue
+
+        answer = "" if pd.isna(line.get(answer_col)) else str(line.get(answer_col, "")).strip()
+        if not answer:
+            continue
+
+        mandant_name = "" if force_active_mandant else (str(line.get(mandant_col, "")).strip() if mandant_col else "")
+        entity_name = str(line.get(entity_col, "")).strip() if entity_col else ""
+        mandant_key = mandant_name.lower() if mandant_name else active_mandant_name
+        mandant_row = mandant_lookup.get(mandant_key) or active_mandant
+        mandant_id = mandant_row.get("id") or active_mandant_id
+        if not mandant_id:
+            continue
+
+        if not entity_name:
+            entity_name = st.session_state.get("active_entity_name") or mandant_display_name(mandant_row)
+
+        cache_key = (mandant_id, entity_name.lower())
+        if cache_key not in entity_cache:
+            entities, _ = load_entities(mandant_id)
+            existing = next((e for e in entities if str(e.get("name", "")).strip().lower() == entity_name.lower()), None)
+            if existing:
+                entity_cache[cache_key] = existing
+            elif create_missing_entities:
+                entity_row = {
+                    "id": new_id(),
+                    "mandant_id": mandant_id,
+                    "name": entity_name,
+                    "entity_type": "Tochtergesellschaft",
+                    "parent_entity_id": None,
+                    "created_at": now_iso(),
+                    "updated_at": now_iso(),
+                }
+                err = supabase_upsert("entities", entity_row)
+                if err:
+                    return 0, 0, created_entities, err
+                entity_cache[cache_key] = entity_row
+                created_entities.append(entity_name)
+                audit_log("save_entity", f"Gesellschaft/Einheit per Onboarding-Import angelegt: {entity_name}", mandant_id=mandant_id, entity_id=entity_row["id"])
+            else:
+                continue
+
+        section = all_questions.get(smart_text, current_section or "Import")
+        entity_id = entity_cache[cache_key].get("id")
+        rows.append(
+            {
+                "id": stable_id(mandant_id, st.session_state.get("active_year_id"), entity_id, section, smart_text),
+                "mandant_id": mandant_id,
+                "reporting_year_id": st.session_state.get("active_year_id"),
+                "year_id": st.session_state.get("active_year_id"),
+                "entity_id": entity_id,
+                "section": section,
+                "question_key": stable_id(section, smart_text),
+                "question_text": smart_text,
+                "question": smart_text,
+                "answer": answer,
+                "is_permanent": section in ["A. Stammdaten", "B. Rechtsform und Größenklasse", "C. Branche und Geschäftsmodell", "J. Reporting-Stil"],
+                "updated_at": now_iso(),
+            }
+        )
+
+    if not rows:
+        return 0, len(created_entities), created_entities, "Keine Antworten zum Import gefunden. Bitte die Spalte 'Antwort' ausfüllen."
+
+    err = supabase_upsert("onboarding_answers", rows)
+    if err:
+        compact_rows = [
+            {k: row[k] for k in ["id", "mandant_id", "reporting_year_id", "entity_id", "section", "question_key", "question_text", "answer", "is_permanent", "updated_at"] if k in row}
+            for row in rows
+        ]
+        err = supabase_upsert("onboarding_answers", compact_rows)
+    if err:
+        legacy_rows = [
+            {k: row[k] for k in ["id", "mandant_id", "year_id", "section", "question", "answer", "updated_at"] if k in row}
+            for row in rows
+        ]
+        err = supabase_upsert("onboarding_answers", legacy_rows)
+    if err:
+        return 0, len(created_entities), created_entities, err
+
+    audit_log("import_onboarding_excel", f"{len(rows)} Onboarding-Antworten aus Excel importiert")
+    return len(rows), len(created_entities), created_entities, None
+
+
 def combined_susa_frame(susa_files: list[dict]) -> tuple[pd.DataFrame | None, dict]:
     frames = [item["norm"] for item in susa_files if isinstance(item.get("norm"), pd.DataFrame)]
     if not frames:
@@ -1868,6 +2022,46 @@ elif phase == "3 Onboarding":
         if profile_err:
             st.warning(profile_err)
         st.session_state.reporting_profile = profile
+
+        st.markdown("### Onboarding per Excel")
+        excel_col_1, excel_col_2 = st.columns(2)
+        with excel_col_1:
+            onboarding_upload = st.file_uploader(
+                "Onboarding-Excel hochladen",
+                type=["xlsx", "xls"],
+                key="onboarding_excel_upload",
+            )
+            create_missing_entities = st.checkbox("Fehlende Gesellschaften automatisch anlegen", value=True)
+            force_active_mandant = st.checkbox("Alle Zeilen dem aktiven Mandanten zuordnen", value=True)
+            if st.button("Onboarding-Excel importieren", use_container_width=True, disabled=onboarding_upload is None):
+                imported, created_count, created_entities, import_err = import_onboarding_excel(
+                    onboarding_upload,
+                    create_missing_entities,
+                    force_active_mandant,
+                )
+                if import_err:
+                    st.error(import_err)
+                else:
+                    msg = f"{imported} Onboarding-Antworten importiert."
+                    if created_count:
+                        msg += f" Neu angelegte Gesellschaften: {', '.join(created_entities)}."
+                    st.success(msg)
+                    answers, _ = load_onboarding_answers(
+                        st.session_state.active_mandant_id,
+                        st.session_state.active_year_id,
+                        st.session_state.active_entity_id,
+                    )
+                    st.session_state.onboarding_answers = answers
+                    st.rerun()
+        with excel_col_2:
+            st.download_button(
+                "Onboarding-Vorlage herunterladen",
+                data=onboarding_template_bytes(),
+                file_name=f"Lumina_Onboarding_Template_{year_display_value()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
+            st.caption("Erwartete Spalten: Mandant, Gesellschaft, Smart Interview, Antwort.")
 
         st.markdown("### Reporting-Profil")
         with st.form("reporting_profile_form"):
