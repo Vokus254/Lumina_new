@@ -147,19 +147,55 @@ elif phase == "4: Prüfen & Optimieren":
         st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
 
 elif phase == "5: Abschluss prüfen":
-    st.header("Phase 5: Struktur-Bilanz")
+    st.header("Phase 5: Interaktive Struktur-Bilanz")
+    
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data'].copy()
+        # Spaltennamen säubern
         df.columns = [str(c).strip() for c in df.columns]
         ausweis_cols = [c for c in df.columns if 'Ausweis' in c]
         wert_cols = [c for c in df.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
         
         if ausweis_cols and wert_cols:
-            pivot = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
-            st.dataframe(pivot, use_container_width=True)
-            st.metric("Vorläufiger Saldo 2025 (Sollte 0 sein)", f"{pivot[wert_cols[-1]].sum():,.2f} €")
+            saldo_akt = wert_cols[-1] # Das aktuellste Jahr
+            
+            # --- 1. Kennzahlen-Leiste ---
+            bilanzsumme = df[df['Ausweis_2'].str.contains('Aktiva', na=False)][saldo_akt].sum()
+            guv_ergebnis = df[df['Ausweis_1'].str.contains('GuV', na=False)][saldo_akt].sum() * -1
+            
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Bilanzsumme", f"{bilanzsumme:,.2f} €")
+            col2.metric("Jahresergebnis (GuV)", f"{guv_ergebnis:,.2f} €", delta_color="normal")
+            col3.metric("Differenz (Soll/Haben)", f"{df[saldo_akt].sum():,.2f} €")
+
+            st.divider()
+
+            # --- 2. Interaktiver Drill-Down ---
+            st.subheader("Bilanz-Gliederung (Ebene 1-5)")
+            
+            # Wir nutzen Expander für die großen Blöcke
+            for ebene1 in df['Ausweis_1'].unique():
+                with st.expander(f"📂 {ebene1}"):
+                    # Untertabelle für diese Ebene
+                    sub_df = df[df['Ausweis_1'] == ebene1]
+                    pivot = sub_df.groupby(ausweis_cols[1:5])[wert_cols].sum().reset_index()
+                    
+                    st.dataframe(
+                        pivot, 
+                        column_config={c: st.column_config.NumberColumn(format="%.2f €") for c in wert_cols},
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                    
+                    # Kleiner Info-Text pro Block
+                    summe_block = pivot[saldo_akt].sum()
+                    st.write(f"**Gesamtsumme {ebene1}: {summe_block:,.2f} €**")
+
+        else:
+            st.error("Strukturdaten oder Salden konnten nicht identifiziert werden.")
     else:
-        st.warning("Keine Daten vorhanden.")
+        st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
+
 
 elif phase == "6: Export & Versand":
     st.header("Phase 6: Finaler Export")
