@@ -39,6 +39,16 @@ APP_VERSION = "2026-05-10"
 APP_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = APP_DIR / "templates"
 DEFAULT_MAPPING_NAME = "Standard"
+OPENAI_MODELS = {
+    "GPT-5.2 (Standard)": "gpt-5.2",
+    "GPT-5": "gpt-5",
+    "GPT-4.1": "gpt-4.1",
+    "GPT-4.1 mini": "gpt-4.1-mini",
+    "GPT-4.1 nano": "gpt-4.1-nano",
+    "GPT-4o": "gpt-4o",
+    "GPT-4o mini": "gpt-4o-mini",
+    "GPT-4 (älter)": "gpt-4",
+}
 
 
 # ------------------------------------------------------------
@@ -1367,19 +1377,36 @@ elif phase == "6 Interpretation":
                     st.warning(status)
                     st.caption("Lege den API-Key in Streamlit unter Secrets als OPENAI_API_KEY ab.")
 
-                model = st.selectbox(
+                model_label = st.selectbox(
                     "OpenAI-Modell",
-                    ["gpt-5.2", "gpt-5"],
+                    list(OPENAI_MODELS.keys()),
                     index=0,
                 )
+                model = OPENAI_MODELS[model_label]
 
                 if st.button("Interpretation mit OpenAI erzeugen", type="primary", use_container_width=True):
+                    progress = st.progress(0)
+                    status_text = st.empty()
+
+                    status_text.write("Schritt 1/4: Zahlenbasis und Auffälligkeiten werden vorbereitet.")
+                    progress.progress(15)
+
+                    status_text.write("Schritt 2/4: KI-Arbeitsgrundlage wird zusammengestellt.")
+                    progress.progress(35)
+
+                    status_text.write(f"Schritt 3/4: OpenAI wird mit Modell {model} angefragt. Das kann je nach Umfang etwas dauern.")
+                    progress.progress(65)
+
                     with st.spinner("OpenAI erstellt den Interpretationsentwurf..."):
                         result, err = generate_openai_interpretation(markdown, model)
                     if err:
+                        progress.progress(100)
+                        status_text.write("Die Anfrage wurde beendet, aber OpenAI hat einen Fehler zurückgegeben.")
                         st.error(err)
                     else:
                         st.session_state.ai_interpretation = result or ""
+                        progress.progress(100)
+                        status_text.write("Schritt 4/4: Entwurf wurde übernommen und steht unten bereit.")
                         st.success("Interpretationsentwurf erstellt.")
 
                 if st.session_state.ai_interpretation:
