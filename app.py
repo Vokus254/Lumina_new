@@ -114,6 +114,7 @@ ONBOARDING_SECTIONS = {
     "K. Dokumentenanforderungen": ["Welche Nachweise werden für Abschluss und Prüfung benötigt?", "Welche Dokumente fehlen aktuell noch?"],
 }
 SUSA_TYPES = ["Hauptgesellschaft", "Verwaltung", "Betriebsstätte", "Einrichtung", "Teilbereich", "Konsolidierte SuSa"]
+ENTITY_TYPES = ["Muttergesellschaft", "Tochtergesellschaft", "Betriebsstätte", "Verwaltung", "Konsolidierung"]
 
 
 # ------------------------------------------------------------
@@ -621,6 +622,7 @@ def interpretation_markdown(
     mandant_profile: dict | None = None,
     reporting_profile: dict | None = None,
     onboarding_answers: dict | None = None,
+    entity_profile: dict | None = None,
 ) -> str:
     current_col, prior_col = analysis_columns(value_cols)
     if current_col is None:
@@ -636,6 +638,7 @@ def interpretation_markdown(
     mandant_profile = mandant_profile or {}
     reporting_profile = reporting_profile or {}
     onboarding_answers = onboarding_answers or {}
+    entity_profile = entity_profile or {}
     rules = ai_config.get("rules", [])
     output_structure = ai_config.get("output_structure", [])
 
@@ -660,6 +663,10 @@ def interpretation_markdown(
         f"- Prüfungspflicht: {mandant_profile.get('pruefungspflicht', '')}",
         f"- Lageberichtspflicht: {mandant_profile.get('lageberichtspflicht', '')}",
         f"- Besonderheiten: {mandant_profile.get('besonderheiten', '')}",
+        "",
+        "## Gesellschaft / Einheit",
+        f"- Name: {entity_profile.get('name', st.session_state.get('active_entity_name', 'Gesamt'))}",
+        f"- Typ: {entity_profile.get('entity_type', '')}",
         "",
         "## Reporting-Profil",
         f"- Berichtsstil: {reporting_profile.get('berichtsstil', '')}",
@@ -941,13 +948,23 @@ def _format_excel_numbers(workbook):
                     cell.alignment = cell.alignment.copy(horizontal="right")
 
 
-def excel_export(susa_raw: pd.DataFrame, mapped: pd.DataFrame, pivot: pd.DataFrame, klarung: pd.DataFrame) -> bytes:
+def excel_export(
+    susa_raw: pd.DataFrame,
+    mapped: pd.DataFrame,
+    pivot: pd.DataFrame,
+    klarung: pd.DataFrame,
+    extra_sheets: dict[str, pd.DataFrame] | None = None,
+) -> bytes:
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         susa_raw.to_excel(writer, sheet_name="01_Rohdaten", index=False)
         mapped.to_excel(writer, sheet_name="02_Mapping_Ergebnis", index=False)
         klarung.to_excel(writer, sheet_name="03_Klaerungsposten", index=False)
         pivot.to_excel(writer, sheet_name="04_Bilanz_GuV", index=False)
+        for sheet_name, sheet_df in (extra_sheets or {}).items():
+            safe_sheet = re.sub(r"[\[\]\:\*\?\/\\]", "_", sheet_name)[:31]
+            if isinstance(sheet_df, pd.DataFrame) and not sheet_df.empty:
+                sheet_df.to_excel(writer, sheet_name=safe_sheet, index=False)
 
         workbook = writer.book
         _format_excel_numbers(workbook)
@@ -1107,6 +1124,8 @@ def supabase_select(table_name: str, filters: dict | None = None, order: str | N
     try:
         query = sb.table(table_name).select("*")
         for key, value in (filters or {}).items():
+            if value is None:
+                continue
             query = query.eq(key, value)
         if order:
             query = query.order(order)
@@ -1138,27 +1157,71 @@ def supabase_delete(table_name: str, row_id: str) -> str | None:
         return supabase_error_message(table_name, e)
 
 
-def audit_log(action: str, description: str, mandant_id: str | None = None, year_id: str | None = None):
+def mandant_display_name(row: dict | None = None) -> str:
+    row = row or st.session_state.get("active_mandant", {})
+    return row.get("name") or row.get("mandantenname") or st.session_state.get("mandant", "Beispiel GmbH")
+
+
+def year_display_value(row: dict | None = None) -> int:
+    row = row or st.session_state.get("active_year", {})
+    value = row.get("year", row.get("jahr", st.session_state.get("abschlussjahr", datetime.now().year - 1)))
+    try:
+        return int(value)
+    except Exception:
+        return int(st.session_state.get("abschlussjahr", datetime.now().year - 1))
+
+
+def audit_log(
+    action: str,
+    description: str,
+    mandant_id: str | None = None,
+    year_id: str | None = None,
+    entity_id: str | None = None,
+):
     row = {
         "id": new_id(),
         "mandant_id": mandant_id or st.session_state.get("active_mandant_id"),
-        "year_id": year_id or st.session_state.get("active_year_id"),
+        "reporting_year_id": year_id or st.session_state.get("active_year_id"),
+        "entity_id": entity_id or st.session_state.get("active_entity_id"),
         "action": action,
         "description": description,
-        "timestamp": now_iso(),
-        "user": st.secrets.get("APP_USER", "streamlit-user") if hasattr(st, "secrets") else "streamlit-user",
+        "created_at": now_iso(),
+        "user_name": st.secrets.get("APP_USER", "streamlit-user") if hasattr(st, "secrets") else "streamlit-user",
     }
-    supabase_upsert("audit_log", row)
+    err = supabase_upsert("audit_log", row)
+    if err:
+        legacy = {
+            "id": row["id"],
+            "mandant_id": row["mandant_id"],
+            "year_id": row["reporting_year_id"],
+            "action": action,
+            "description": description,
+            "timestamp": row["created_at"],
+            "user": row["user_name"],
+        }
+        supabase_upsert("audit_log", legacy)
 
 
 def load_mandants() -> tuple[list[dict], str | None]:
-    return supabase_select("mandants", order="mandantenname")
+    rows, err = supabase_select("mandants", order="name")
+    if err:
+        rows, err = supabase_select("mandants", order="mandantenname")
+    return rows, err
 
 
 def load_years(mandant_id: str | None) -> tuple[list[dict], str | None]:
     if not mandant_id:
         return [], None
-    return supabase_select("mandant_years", {"mandant_id": mandant_id}, order="jahr")
+    rows, err = supabase_select("reporting_years", {"mandant_id": mandant_id}, order="year")
+    if err:
+        rows, err = supabase_select("mandant_years", {"mandant_id": mandant_id}, order="jahr")
+    return rows, err
+
+
+def load_entities(mandant_id: str | None) -> tuple[list[dict], str | None]:
+    if not mandant_id:
+        return [], None
+    return supabase_select("entities", {"mandant_id": mandant_id}, order="name")
 
 
 def load_reporting_profile(mandant_id: str | None) -> tuple[dict, str | None]:
@@ -1168,21 +1231,183 @@ def load_reporting_profile(mandant_id: str | None) -> tuple[dict, str | None]:
     return (rows[0] if rows else {}, err)
 
 
-def load_onboarding_answers(mandant_id: str | None, year_id: str | None) -> tuple[dict, str | None]:
+def load_onboarding_answers(
+    mandant_id: str | None,
+    year_id: str | None,
+    entity_id: str | None = None,
+) -> tuple[dict, str | None]:
     if not mandant_id:
         return {}, None
     filters = {"mandant_id": mandant_id}
     if year_id:
-        filters["year_id"] = year_id
+        filters["reporting_year_id"] = year_id
+    if entity_id:
+        filters["entity_id"] = entity_id
     rows, err = supabase_select("onboarding_answers", filters)
-    answers = {(r.get("section"), r.get("question")): r.get("answer", "") for r in rows}
+    if err and "reporting_year_id" in filters:
+        filters = {"mandant_id": mandant_id, "year_id": year_id}
+        rows, err = supabase_select("onboarding_answers", filters)
+    answers = {
+        (r.get("section"), r.get("question_text") or r.get("question")): r.get("answer", "")
+        for r in rows
+    }
     return answers, err
 
 
-def load_susa_uploads(mandant_id: str | None, year_id: str | None) -> tuple[list[dict], str | None]:
+def load_susa_uploads(mandant_id: str | None, year_id: str | None, entity_id: str | None = None) -> tuple[list[dict], str | None]:
     if not mandant_id or not year_id:
         return [], None
-    return supabase_select("susa_uploads", {"mandant_id": mandant_id, "year_id": year_id}, order="created_at")
+    filters = {"mandant_id": mandant_id, "reporting_year_id": year_id}
+    if entity_id:
+        filters["entity_id"] = entity_id
+    rows, err = supabase_select("susa_uploads", filters, order="uploaded_at")
+    if err:
+        filters = {"mandant_id": mandant_id, "year_id": year_id}
+        rows, err = supabase_select("susa_uploads", filters, order="created_at")
+    return rows, err
+
+
+def load_mapping_assignments(mandant_id: str | None, entity_id: str | None) -> tuple[pd.DataFrame, str | None]:
+    rows, err = supabase_select("mapping_assignments")
+    if err:
+        return pd.DataFrame(), err
+    filtered = []
+    for row in rows:
+        source = row.get("source") or "global"
+        if source == "global":
+            filtered.append(row)
+        elif source == "mandant" and row.get("mandant_id") == mandant_id:
+            filtered.append(row)
+        elif source in ["entity", "user_override"] and row.get("mandant_id") == mandant_id and row.get("entity_id") == entity_id:
+            filtered.append(row)
+    if not filtered:
+        return pd.DataFrame(), None
+    priority = {"global": 1, "mandant": 2, "entity": 3, "user_override": 4}
+    df = pd.DataFrame(filtered)
+    df["__priority"] = df["source"].map(priority).fillna(1)
+    df = df.sort_values(["konto_nr", "__priority"]).drop_duplicates("konto_nr", keep="last")
+    df = df.rename(columns={"konto_nr": "KontoNr", "konto_bezeichnung": "Kontobezeichnung"})
+    for i in range(1, 8):
+        df = df.rename(columns={f"ausweis_{i}": f"Ausweis_{i}"})
+    return normalize_mapping(df), None
+
+
+def effective_mapping(base_mapping: pd.DataFrame | None) -> pd.DataFrame:
+    base = normalize_mapping(base_mapping) if isinstance(base_mapping, pd.DataFrame) and not base_mapping.empty else empty_mapping_frame()
+    assignments, err = load_mapping_assignments(st.session_state.get("active_mandant_id"), st.session_state.get("active_entity_id"))
+    if err or assignments.empty:
+        return base
+    return merge_mapping_updates(base, assignments)
+
+
+def persist_mapping_assignments(updates: pd.DataFrame, source: str = "user_override") -> str | None:
+    if updates.empty or not st.session_state.get("active_mandant_id"):
+        return None
+    df = normalize_mapping(updates)
+    rows = []
+    for _, r in df.iterrows():
+        row = {
+            "id": stable_id(st.session_state.active_mandant_id, st.session_state.get("active_entity_id"), r["KontoNr"], source),
+            "mandant_id": st.session_state.active_mandant_id,
+            "entity_id": st.session_state.get("active_entity_id"),
+            "konto_nr": r["KontoNr"],
+            "konto_bezeichnung": r.get("Kontobezeichnung", ""),
+            "source": source if st.session_state.get("active_entity_id") else "mandant",
+            "confidence": 1.0,
+            "updated_at": now_iso(),
+        }
+        for i in range(1, 8):
+            row[f"ausweis_{i}"] = r.get(f"Ausweis_{i}", "")
+        rows.append(row)
+    return supabase_upsert("mapping_assignments", rows)
+
+
+def persist_susa_accounts(upload_id: str, norm: pd.DataFrame, value_cols: list[str]) -> str | None:
+    if norm.empty or not upload_id:
+        return None
+    current_col = value_cols[0] if value_cols else None
+    prior_col = value_cols[1] if len(value_cols) > 1 else None
+    rows = []
+    for _, r in norm.iterrows():
+        konto = normalize_konto(r.get("KontoNr", ""))
+        if not konto:
+            continue
+        rows.append(
+            {
+                "id": stable_id(upload_id, konto),
+                "susa_upload_id": upload_id,
+                "konto_nr": konto,
+                "konto_bezeichnung": r.get("Kontobezeichnung", ""),
+                "saldo_current": parse_number(r.get(current_col, 0.0)) if current_col else 0.0,
+                "saldo_prior": parse_number(r.get(prior_col, 0.0)) if prior_col else 0.0,
+                "created_at": now_iso(),
+            }
+        )
+    return supabase_upsert("susa_accounts", rows) if rows else None
+
+
+def table_has_rows(table_name: str, filters: dict) -> bool:
+    rows, err = supabase_select(table_name, filters)
+    return bool(rows) and not err
+
+
+def mandant_matrix() -> pd.DataFrame:
+    mandants, _ = load_mandants()
+    rows = []
+    for mandant in mandants:
+        years, _ = load_years(mandant.get("id"))
+        entities, _ = load_entities(mandant.get("id"))
+        if not years:
+            years = [{}]
+        if not entities:
+            entities = [{}]
+        for year in years:
+            year_id = year.get("id")
+            for entity in entities:
+                entity_id = entity.get("id")
+                rows.append(
+                    {
+                        "Mandant": mandant_display_name(mandant),
+                        "Jahr": year_display_value(year) if year else "",
+                        "Gesellschaft": entity.get("name", "Noch keine Einheit"),
+                        "SuSa vorhanden": "ja" if year_id and table_has_rows("susa_uploads", {"mandant_id": mandant.get("id"), "reporting_year_id": year_id, "entity_id": entity_id}) else "nein",
+                        "Mapping vorhanden": "ja" if table_has_rows("mapping_assignments", {"mandant_id": mandant.get("id"), "entity_id": entity_id}) else "nein",
+                        "Onboarding vorhanden": "ja" if year_id and table_has_rows("onboarding_answers", {"mandant_id": mandant.get("id"), "reporting_year_id": year_id, "entity_id": entity_id}) else "nein",
+                        "KI-Erläuterung vorhanden": "ja" if year_id and table_has_rows("ai_explanations", {"mandant_id": mandant.get("id"), "reporting_year_id": year_id, "entity_id": entity_id}) else "nein",
+                        "Status": year.get("status", "offen") if year else "offen",
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def export_context_sheets() -> dict[str, pd.DataFrame]:
+    mandants, _ = load_mandants()
+    entities, _ = load_entities(st.session_state.get("active_mandant_id"))
+    onboarding_rows, _ = supabase_select(
+        "onboarding_answers",
+        {
+            "mandant_id": st.session_state.get("active_mandant_id"),
+            "reporting_year_id": st.session_state.get("active_year_id"),
+        },
+    )
+    susa_rows, _ = load_susa_uploads(st.session_state.get("active_mandant_id"), st.session_state.get("active_year_id"))
+    ai_rows, _ = supabase_select(
+        "ai_explanations",
+        {
+            "mandant_id": st.session_state.get("active_mandant_id"),
+            "reporting_year_id": st.session_state.get("active_year_id"),
+        },
+    )
+    audit_rows, _ = supabase_select("audit_log", {"mandant_id": st.session_state.get("active_mandant_id")})
+    sheets = {
+        "05_Mandantenuebersicht": pd.DataFrame(mandants),
+        "06_Gesellschaften": pd.DataFrame(entities),
+        "07_Onboarding": pd.DataFrame(onboarding_rows),
+        "08_SuSa_Uploads": pd.DataFrame(susa_rows),
+        "09_KI_Erlaeuterungen": pd.DataFrame(ai_rows),
+        "10_Audit_Log": pd.DataFrame(audit_rows),
+    }
+    return sheets
 
 
 def combined_susa_frame(susa_files: list[dict]) -> tuple[pd.DataFrame | None, dict]:
@@ -1209,9 +1434,14 @@ for key, default in {
     "abschlussjahr": datetime.now().year - 1,
     "standard": "HGB Einzelabschluss",
     "active_mandant_id": None,
+    "active_mandant_name": "Beispiel GmbH",
     "active_year_id": None,
-    "active_mandant": {},
     "active_year": {},
+    "active_year_value": datetime.now().year - 1,
+    "active_entity_id": None,
+    "active_entity_name": "",
+    "active_entity": {},
+    "active_mandant": {},
     "reporting_profile": {},
     "onboarding_answers": {},
     "mapping_name": DEFAULT_MAPPING_NAME,
@@ -1256,8 +1486,9 @@ st.sidebar.markdown("---")
 st.sidebar.write("**Status**")
 st.sidebar.write("Supabase:", "✅ verbunden" if sb_client else "⚠️ nicht verbunden")
 st.sidebar.write("OpenAI:", "✅ verbunden" if openai_status() == "verbunden" else "⚠️ nicht verbunden")
-st.sidebar.write("Aktiver Mandant:", st.session_state.active_mandant.get("mandantenname") or st.session_state.mandant)
-st.sidebar.write("Aktives Jahr:", st.session_state.active_year.get("jahr") or st.session_state.abschlussjahr)
+st.sidebar.write("Aktiver Mandant:", mandant_display_name())
+st.sidebar.write("Aktives Jahr:", year_display_value())
+st.sidebar.write("Aktive Einheit:", st.session_state.active_entity_name or "Gesamt")
 st.sidebar.write("Anzahl SuSAs:", len(st.session_state.susa_files))
 st.sidebar.write("Master-Mapping:", st.session_state.mapping_name)
 st.sidebar.write("Mapping:", "✅ geladen" if st.session_state.mapping is not None else "⚠️ fehlt")
@@ -1272,8 +1503,9 @@ st.sidebar.write("Export:", st.session_state.export_status)
 st.title("📊 LUMINA Mapping – internes Abschluss-Cockpit")
 st.caption("Von der SuSa zum prüferfreundlichen Excel-Abschluss-Paket.")
 st.markdown(
-    f"**Aktiver Mandant:** {st.session_state.active_mandant.get('mandantenname') or st.session_state.mandant}  \n"
-    f"**Aktives Jahr:** {st.session_state.active_year.get('jahr') or st.session_state.abschlussjahr}"
+    f"**Aktiver Mandant:** {mandant_display_name()}  \n"
+    f"**Aktives Jahr:** {year_display_value()}  \n"
+    f"**Aktive Einheit:** {st.session_state.active_entity_name or 'Gesamt'}"
 )
 
 
@@ -1313,11 +1545,11 @@ elif phase == "2 Mandanten":
     if mandants:
         label_counts = {}
         for m in mandants:
-            base = f"{m.get('mandantenname', 'Ohne Namen')} ({m.get('rechtsform', '-')})"
+            base = f"{mandant_display_name(m)} ({m.get('rechtsform', '-')})"
             label_counts[base] = label_counts.get(base, 0) + 1
         labels = {}
         for m in mandants:
-            base = f"{m.get('mandantenname', 'Ohne Namen')} ({m.get('rechtsform', '-')})"
+            base = f"{mandant_display_name(m)} ({m.get('rechtsform', '-')})"
             label = f"{base} [{str(m.get('id', ''))[:8]}]" if label_counts[base] > 1 else base
             labels[label] = m
         current_label = next((label for label, item in labels.items() if item.get("id") == st.session_state.active_mandant_id), list(labels.keys())[0])
@@ -1326,7 +1558,8 @@ elif phase == "2 Mandanten":
         if selected_mandant.get("id") != st.session_state.active_mandant_id:
             st.session_state.active_mandant = selected_mandant
             st.session_state.active_mandant_id = selected_mandant.get("id")
-            st.session_state.mandant = selected_mandant.get("mandantenname", st.session_state.mandant)
+            st.session_state.active_mandant_name = mandant_display_name(selected_mandant)
+            st.session_state.mandant = st.session_state.active_mandant_name
             audit_log("select_mandant", f"Mandant aktiviert: {st.session_state.mandant}", st.session_state.active_mandant_id)
             st.rerun()
     else:
@@ -1338,7 +1571,7 @@ elif phase == "2 Mandanten":
     with st.form("mandant_form"):
         col1, col2, col3 = st.columns(3)
         with col1:
-            mandantenname = st.text_input("Mandantenname", current.get("mandantenname", st.session_state.mandant))
+            mandantenname = st.text_input("Mandantenname", mandant_display_name(current))
             rechtsform = st.text_input("Rechtsform", current.get("rechtsform", ""))
             branche = st.text_input("Branche", current.get("branche", ""))
             sitz = st.text_input("Sitz", current.get("sitz", ""))
@@ -1360,6 +1593,7 @@ elif phase == "2 Mandanten":
         is_new_mandant = create_new_mandant or not current.get("id")
         row = {
             "id": new_id() if is_new_mandant else current.get("id"),
+            "name": mandantenname,
             "mandantenname": mandantenname,
             "rechtsform": rechtsform,
             "branche": branche,
@@ -1379,10 +1613,17 @@ elif phase == "2 Mandanten":
             row["created_at"] = now_iso()
         err = supabase_upsert("mandants", row)
         if err:
+            compact_row = {k: row[k] for k in ["id", "name", "branche", "rechtsform", "sitz", "created_at", "updated_at"] if k in row}
+            err = supabase_upsert("mandants", compact_row)
+        if err:
+            legacy_row = {k: v for k, v in row.items() if k != "name"}
+            err = supabase_upsert("mandants", legacy_row)
+        if err:
             st.error(err)
         else:
             st.session_state.active_mandant = row
             st.session_state.active_mandant_id = row["id"]
+            st.session_state.active_mandant_name = row["name"]
             st.session_state.mandant = row["mandantenname"]
             st.success("Mandant gespeichert.")
             audit_log("save_mandant", f"Mandant gespeichert: {row['mandantenname']}", row["id"])
@@ -1393,8 +1634,8 @@ elif phase == "2 Mandanten":
         if year_err:
             st.warning(year_err)
         if years:
-            year_labels = {str(y.get("jahr")): y for y in years}
-            current_year_label = str(st.session_state.active_year.get("jahr") or st.session_state.abschlussjahr)
+            year_labels = {str(year_display_value(y)): y for y in years}
+            current_year_label = str(year_display_value())
             if current_year_label not in year_labels:
                 current_year_label = list(year_labels.keys())[0]
             selected_year_label = st.selectbox("Abschlussjahr auswählen", list(year_labels.keys()), index=list(year_labels.keys()).index(current_year_label))
@@ -1402,7 +1643,8 @@ elif phase == "2 Mandanten":
             if year.get("id") != st.session_state.active_year_id:
                 st.session_state.active_year = year
                 st.session_state.active_year_id = year.get("id")
-                st.session_state.abschlussjahr = int(year.get("jahr"))
+                st.session_state.active_year_value = year_display_value(year)
+                st.session_state.abschlussjahr = year_display_value(year)
                 st.rerun()
 
         with st.form("year_form"):
@@ -1417,10 +1659,11 @@ elif phase == "2 Mandanten":
             save_year = st.form_submit_button("Abschlussjahr speichern", use_container_width=True)
 
         if save_year:
-            existing = next((y for y in years if int(y.get("jahr")) == int(jahr)), {})
+            existing = next((y for y in years if year_display_value(y) == int(jahr)), {})
             row = {
                 "id": existing.get("id") or new_id(),
                 "mandant_id": st.session_state.active_mandant_id,
+                "year": int(jahr),
                 "jahr": int(jahr),
                 "status": status,
                 "wesentliche_themen": wesentliche_themen,
@@ -1429,26 +1672,103 @@ elif phase == "2 Mandanten":
             }
             if "created_at" not in existing:
                 row["created_at"] = now_iso()
-            err = supabase_upsert("mandant_years", row)
+            err = supabase_upsert("reporting_years", row)
+            if err:
+                compact_row = {k: row[k] for k in ["id", "mandant_id", "year", "status", "materiality_threshold", "created_at", "updated_at"] if k in row}
+                err = supabase_upsert("reporting_years", compact_row)
+            if err:
+                legacy_row = {k: v for k, v in row.items() if k != "year"}
+                err = supabase_upsert("mandant_years", legacy_row)
             if err:
                 st.error(err)
             else:
                 st.session_state.active_year = row
                 st.session_state.active_year_id = row["id"]
+                st.session_state.active_year_value = int(jahr)
                 st.session_state.abschlussjahr = int(jahr)
                 st.success("Abschlussjahr gespeichert.")
                 audit_log("save_year", f"Abschlussjahr gespeichert: {jahr}", st.session_state.active_mandant_id, row["id"])
 
+        st.markdown("### Gesellschaften / Einheiten")
+        entities, entity_err = load_entities(st.session_state.active_mandant_id)
+        if entity_err:
+            st.warning(entity_err)
+        if entities:
+            entity_labels = {f"{e.get('name', 'Ohne Namen')} ({e.get('entity_type', '-')})": e for e in entities}
+            current_entity_label = next(
+                (label for label, item in entity_labels.items() if item.get("id") == st.session_state.active_entity_id),
+                list(entity_labels.keys())[0],
+            )
+            selected_entity_label = st.selectbox("Gesellschaft/Einheit auswählen", list(entity_labels.keys()), index=list(entity_labels.keys()).index(current_entity_label))
+            entity = entity_labels[selected_entity_label]
+            if entity.get("id") != st.session_state.active_entity_id:
+                st.session_state.active_entity = entity
+                st.session_state.active_entity_id = entity.get("id")
+                st.session_state.active_entity_name = entity.get("name", "")
+                audit_log("select_entity", f"Einheit aktiviert: {st.session_state.active_entity_name}", entity_id=st.session_state.active_entity_id)
+                st.rerun()
+        else:
+            st.info("Noch keine Gesellschaft/Einheit vorhanden. Lege unten die erste Einheit an.")
+
+        with st.form("entity_form"):
+            ec1, ec2, ec3 = st.columns(3)
+            with ec1:
+                entity_name = st.text_input("Name der Gesellschaft/Einheit", st.session_state.active_entity.get("name", mandant_display_name()))
+            with ec2:
+                entity_type = st.selectbox(
+                    "Typ",
+                    ENTITY_TYPES,
+                    index=ENTITY_TYPES.index(st.session_state.active_entity.get("entity_type", ENTITY_TYPES[0])) if st.session_state.active_entity.get("entity_type") in ENTITY_TYPES else 0,
+                )
+            with ec3:
+                parent_options = {"Keine": None}
+                parent_options.update({e.get("name", e.get("id")): e.get("id") for e in entities if e.get("id") != st.session_state.active_entity_id})
+                parent_label = st.selectbox("Übergeordnete Einheit", list(parent_options.keys()), index=0)
+            save_entity = st.form_submit_button("Gesellschaft/Einheit speichern", use_container_width=True)
+
+        if save_entity:
+            existing_entity = st.session_state.active_entity if st.session_state.active_entity_id else {}
+            row = {
+                "id": existing_entity.get("id") or new_id(),
+                "mandant_id": st.session_state.active_mandant_id,
+                "name": entity_name,
+                "entity_type": entity_type,
+                "parent_entity_id": parent_options[parent_label],
+                "updated_at": now_iso(),
+            }
+            if not existing_entity.get("created_at"):
+                row["created_at"] = now_iso()
+            err = supabase_upsert("entities", row)
+            if err:
+                st.error(err)
+            else:
+                st.session_state.active_entity = row
+                st.session_state.active_entity_id = row["id"]
+                st.session_state.active_entity_name = row["name"]
+                st.success("Gesellschaft/Einheit gespeichert.")
+                audit_log("save_entity", f"Gesellschaft/Einheit gespeichert: {row['name']}", entity_id=row["id"])
+
+        st.markdown("### Übersichtsmatrix")
+        matrix = mandant_matrix()
+        if matrix.empty:
+            st.info("Noch keine Matrixdaten vorhanden.")
+        else:
+            st.dataframe(matrix, use_container_width=True, hide_index=True)
+
         st.markdown("### Löschen")
         delete_confirm = st.text_input("Zum Löschen des aktiven Mandanten bitte Mandantenname exakt eingeben")
-        if st.button("Aktiven Mandanten löschen", disabled=delete_confirm != st.session_state.active_mandant.get("mandantenname")):
+        if st.button("Aktiven Mandanten löschen", disabled=delete_confirm != mandant_display_name()):
             err = supabase_delete("mandants", st.session_state.active_mandant_id)
             if err:
                 st.error(err)
             else:
-                audit_log("delete_mandant", f"Mandant gelöscht: {st.session_state.active_mandant.get('mandantenname')}", st.session_state.active_mandant_id)
+                audit_log("delete_mandant", f"Mandant gelöscht: {mandant_display_name()}", st.session_state.active_mandant_id)
                 st.session_state.active_mandant = {}
                 st.session_state.active_mandant_id = None
+                st.session_state.active_mandant_name = ""
+                st.session_state.active_entity = {}
+                st.session_state.active_entity_id = None
+                st.session_state.active_entity_name = ""
                 st.success("Mandant gelöscht.")
 
 
@@ -1461,7 +1781,11 @@ elif phase == "3 Onboarding":
     if not st.session_state.active_mandant_id:
         st.warning("Bitte zuerst unter 'Mandanten' einen Mandanten aktiv setzen.")
     else:
-        answers, ans_err = load_onboarding_answers(st.session_state.active_mandant_id, st.session_state.active_year_id)
+        answers, ans_err = load_onboarding_answers(
+            st.session_state.active_mandant_id,
+            st.session_state.active_year_id,
+            st.session_state.active_entity_id,
+        )
         if ans_err:
             st.warning(ans_err)
         st.session_state.onboarding_answers = answers
@@ -1515,12 +1839,17 @@ elif phase == "3 Onboarding":
                     answer = st.text_area(question, value=answers.get(key, ""), key=f"onb_{section}_{question}", height=90)
                     answer_rows.append(
                         {
-                            "id": stable_id(st.session_state.active_mandant_id, st.session_state.active_year_id, section, question),
+                            "id": stable_id(st.session_state.active_mandant_id, st.session_state.active_year_id, st.session_state.active_entity_id, section, question),
                             "mandant_id": st.session_state.active_mandant_id,
+                            "reporting_year_id": st.session_state.active_year_id,
                             "year_id": st.session_state.active_year_id,
+                            "entity_id": st.session_state.active_entity_id,
                             "section": section,
+                            "question_key": stable_id(section, question),
+                            "question_text": question,
                             "question": question,
                             "answer": answer,
+                            "is_permanent": section in ["A. Stammdaten", "B. Rechtsform und Größenklasse", "C. Branche und Geschäftsmodell", "J. Reporting-Stil"],
                             "updated_at": now_iso(),
                         }
                     )
@@ -1529,6 +1858,18 @@ elif phase == "3 Onboarding":
         if save_answers:
             rows = [row for row in answer_rows if row["answer"].strip()]
             err = supabase_upsert("onboarding_answers", rows) if rows else None
+            if err and rows:
+                compact_rows = [
+                    {k: row[k] for k in ["id", "mandant_id", "reporting_year_id", "entity_id", "section", "question_key", "question_text", "answer", "is_permanent", "updated_at"] if k in row}
+                    for row in rows
+                ]
+                err = supabase_upsert("onboarding_answers", compact_rows)
+            if err and rows:
+                legacy_rows = [
+                    {k: row[k] for k in ["id", "mandant_id", "year_id", "section", "question", "answer", "updated_at"] if k in row}
+                    for row in rows
+                ]
+                err = supabase_upsert("onboarding_answers", legacy_rows)
             if err:
                 st.error(err)
             else:
@@ -1596,8 +1937,24 @@ elif phase == "4 Upload & Mapping":
 
     with right:
         st.markdown("#### 2. Mandanten-SuSa")
+        entities, entity_err = load_entities(st.session_state.active_mandant_id)
+        if entity_err:
+            st.warning(entity_err)
+        if entities:
+            entity_labels = {f"{e.get('name', 'Ohne Namen')} ({e.get('entity_type', '-')})": e for e in entities}
+            current_entity_label = next(
+                (label for label, item in entity_labels.items() if item.get("id") == st.session_state.active_entity_id),
+                list(entity_labels.keys())[0],
+            )
+            selected_entity_label = st.selectbox("SuSa für Gesellschaft/Einheit", list(entity_labels.keys()), index=list(entity_labels.keys()).index(current_entity_label))
+            selected_entity = entity_labels[selected_entity_label]
+            st.session_state.active_entity = selected_entity
+            st.session_state.active_entity_id = selected_entity.get("id")
+            st.session_state.active_entity_name = selected_entity.get("name", "")
+        elif st.session_state.active_mandant_id:
+            st.info("Lege unter 'Mandanten' eine Gesellschaft/Einheit an, damit die SuSa eindeutig zugeordnet werden kann.")
         susa_type = st.selectbox("SuSa-Typ", SUSA_TYPES, index=0)
-        susa_version = st.text_input("SuSa-Version", value=f"v{len(st.session_state.susa_files) + 1}")
+        susa_version = st.number_input("SuSa-Version", min_value=1, value=len(st.session_state.susa_files) + 1, step=1)
         susa_files = st.file_uploader("SuSa-Excel hochladen", type=["xlsx", "xls"], key="susa_file", accept_multiple_files=True)
 
         st.markdown("#### Beispiele")
@@ -1654,6 +2011,8 @@ elif phase == "4 Upload & Mapping":
                         "filename": susa_file.name,
                         "type": susa_type,
                         "version": susa_version,
+                        "entity_id": st.session_state.get("active_entity_id"),
+                        "entity_name": st.session_state.get("active_entity_name", ""),
                         "raw": raw,
                         "norm": norm,
                         "meta": meta,
@@ -1664,20 +2023,51 @@ elif phase == "4 Upload & Mapping":
                     st.session_state.susa_norm = norm
                     st.session_state.meta = meta
                     if st.session_state.active_mandant_id and st.session_state.active_year_id:
-                        supabase_upsert(
+                        err_upload = supabase_upsert(
                             "susa_uploads",
                             {
+                                "id": item["id"],
+                                "mandant_id": st.session_state.active_mandant_id,
+                                "reporting_year_id": st.session_state.active_year_id,
+                                "year_id": st.session_state.active_year_id,
+                                "entity_id": st.session_state.get("active_entity_id"),
+                                "filename": item["filename"],
+                                "name": item["name"],
+                                "upload_type": item["type"],
+                                "susa_type": item["type"],
+                                "version": item["version"],
+                                "row_count": len(norm),
+                                "uploaded_at": item["created_at"],
+                                "created_at": item["created_at"],
+                            },
+                        )
+                        if err_upload:
+                            compact_upload = {
+                                "id": item["id"],
+                                "mandant_id": st.session_state.active_mandant_id,
+                                "reporting_year_id": st.session_state.active_year_id,
+                                "entity_id": st.session_state.get("active_entity_id"),
+                                "filename": item["filename"],
+                                "version": item["version"],
+                                "upload_type": item["type"],
+                                "uploaded_at": item["created_at"],
+                            }
+                            err_upload = supabase_upsert("susa_uploads", compact_upload)
+                        if err_upload:
+                            legacy_upload = {
                                 "id": item["id"],
                                 "mandant_id": st.session_state.active_mandant_id,
                                 "year_id": st.session_state.active_year_id,
                                 "name": item["name"],
                                 "susa_type": item["type"],
-                                "version": item["version"],
+                                "version": str(item["version"]),
                                 "row_count": len(norm),
                                 "created_at": item["created_at"],
-                            },
-                        )
-                        audit_log("upload_susa", f"SuSa hochgeladen: {item['name']} ({item['type']}, {item['version']})")
+                            }
+                            err_upload = supabase_upsert("susa_uploads", legacy_upload)
+                        if not err_upload:
+                            persist_susa_accounts(item["id"], norm, meta.get("value_cols", []))
+                            audit_log("upload_susa", f"SuSa hochgeladen: {item['name']} ({item['type']}, Version {item['version']})")
                     st.success(f"SuSa geladen: {susa_file.name} mit {len(norm)} Konten.")
                 except Exception as e:
                     st.error(f"{susa_file.name}: {e}")
@@ -1686,13 +2076,13 @@ elif phase == "4 Upload & Mapping":
             st.markdown("#### Geladene SuSAs")
             overview = pd.DataFrame(
                 [
-                    {"Name": item["name"], "Typ": item["type"], "Version": item["version"], "Konten": len(item["norm"])}
+                    {"Gesellschaft": item.get("entity_name", "Gesamt"), "Name": item["name"], "Typ": item["type"], "Version": item["version"], "Konten": len(item["norm"])}
                     for item in st.session_state.susa_files
                 ]
             )
             st.dataframe(overview, use_container_width=True, hide_index=True)
 
-            scope_options = ["Gesamt"] + [f"{item['name']} | {item['version']}" for item in st.session_state.susa_files]
+            scope_options = ["Gesamt"] + [f"{item.get('entity_name', 'Gesamt')} | {item['name']} | Version {item['version']}" for item in st.session_state.susa_files]
             st.session_state.selected_susa_scope = st.selectbox("Auswertung", scope_options, index=0)
             if st.session_state.selected_susa_scope == "Gesamt":
                 combined, combined_meta = combined_susa_frame(st.session_state.susa_files)
@@ -1717,7 +2107,7 @@ elif phase == "4 Upload & Mapping":
         elif st.session_state.mapping is None and get_dynamic_mapping is None:
             st.error("Bitte zuerst ein Mapping hochladen oder aus Supabase laden.")
         else:
-            active_mapping = st.session_state.mapping if st.session_state.mapping is not None else empty_mapping_frame()
+            active_mapping = effective_mapping(st.session_state.mapping if st.session_state.mapping is not None else empty_mapping_frame())
             st.session_state.mapped = apply_mapping(st.session_state.susa_norm, active_mapping)
             counts = mapping_counts(st.session_state.mapped)
             st.success(f"Mapping abgeschlossen. Vorschläge: {counts['vorschlag']}. Klärungsposten: {counts['klarung']}")
@@ -1788,6 +2178,8 @@ elif phase == "5 Prüfen":
                         st.session_state.mapping = merge_mapping_updates(st.session_state.mapping, updates)
                         st.session_state.mapped = apply_mapping(st.session_state.susa_norm, st.session_state.mapping)
                         err = save_mapping_to_supabase(st.session_state.mapping, st.session_state.mapping_name)
+                        assignment_err = persist_mapping_assignments(updates)
+                        err = err or assignment_err
                         if err:
                             st.error(err)
                         else:
@@ -1923,14 +2315,15 @@ elif phase == "7 Interpretation":
                 markdown = interpretation_markdown(
                     df,
                     value_cols,
-                    st.session_state.mandant,
-                    int(st.session_state.abschlussjahr),
+                    mandant_display_name(),
+                    int(year_display_value()),
                     threshold,
                     top_n,
                     prompt_config,
                     st.session_state.active_mandant,
                     st.session_state.reporting_profile,
                     st.session_state.onboarding_answers,
+                    st.session_state.active_entity,
                 )
                 st.text_area("Prompt für KI-Interpretation", markdown, height=420)
                 st.download_button(
@@ -1995,14 +2388,15 @@ elif phase == "7 Interpretation":
                 markdown = interpretation_markdown(
                     df,
                     value_cols,
-                    st.session_state.mandant,
-                    int(st.session_state.abschlussjahr),
+                    mandant_display_name(),
+                    int(year_display_value()),
                     threshold,
                     top_n,
                     ai_config,
                     st.session_state.active_mandant,
                     st.session_state.reporting_profile,
                     st.session_state.onboarding_answers,
+                    st.session_state.active_entity,
                 )
                 status = openai_status()
                 if status == "verbunden":
@@ -2032,6 +2426,20 @@ elif phase == "7 Interpretation":
                         st.error(err)
                     else:
                         st.session_state.ai_interpretation = result or ""
+                        supabase_upsert(
+                            "ai_explanations",
+                            {
+                                "id": new_id(),
+                                "mandant_id": st.session_state.get("active_mandant_id"),
+                                "reporting_year_id": st.session_state.get("active_year_id"),
+                                "entity_id": st.session_state.get("active_entity_id"),
+                                "purpose": purpose,
+                                "prompt": markdown,
+                                "response": st.session_state.ai_interpretation,
+                                "created_at": now_iso(),
+                            },
+                        )
+                        audit_log("ai_explanation_created", f"KI-Erläuterung erzeugt: {purpose}")
                         progress.progress(100)
                         status_text.write("Schritt 4/4: Entwurf wurde übernommen und steht unten bereit.")
                         st.success("Interpretationsentwurf erstellt.")
@@ -2043,13 +2451,13 @@ elif phase == "7 Interpretation":
                         st.text_area("OpenAI-Entwurf als Text", st.session_state.ai_interpretation, height=420)
                     docx = ai_output_to_docx(
                         st.session_state.ai_interpretation,
-                        f"LUMINA Interpretation {st.session_state.mandant} {st.session_state.abschlussjahr}",
+                        f"LUMINA Interpretation {mandant_display_name()} {year_display_value()}",
                     )
                     if docx:
                         st.download_button(
                             "OpenAI-Entwurf als Word herunterladen",
                             data=docx,
-                            file_name=f"Lumina_OpenAI_Interpretation_{st.session_state.abschlussjahr}.docx",
+                            file_name=f"Lumina_OpenAI_Interpretation_{year_display_value()}.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                             use_container_width=True,
                         )
@@ -2075,8 +2483,9 @@ elif phase == "8 Export":
             f"""
             <div class="lumina-box">
             <b>Exportinhalt</b><br>
-            Mandant: {st.session_state.mandant}<br>
-            Abschlussjahr: {st.session_state.abschlussjahr}<br>
+            Mandant: {mandant_display_name()}<br>
+            Abschlussjahr: {year_display_value()}<br>
+            Gesellschaft/Einheit: {st.session_state.active_entity_name or 'Gesamt'}<br>
             Standard: {st.session_state.standard}<br>
             Klärungsposten: {len(klarung)}
             </div>
@@ -2089,9 +2498,10 @@ elif phase == "8 Export":
             df,
             pivot,
             klarung,
+            export_context_sheets(),
         )
-        safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", st.session_state.mandant).strip("_")
-        filename = f"Lumina_Pruefungspaket_{safe_name}_{st.session_state.abschlussjahr}.xlsx"
+        safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", mandant_display_name()).strip("_")
+        filename = f"Lumina_Pruefungspaket_{safe_name}_{year_display_value()}.xlsx"
         if st.session_state.export_status != "bereit":
             st.session_state.export_status = "bereit"
             audit_log("export_created", f"Excel-Prüfungspaket vorbereitet: {filename}")

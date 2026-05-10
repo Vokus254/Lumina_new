@@ -1,6 +1,6 @@
 # LUMINA Mapping
 
-Streamlit-App für den Weg von einer Summen- und Saldenliste zu einem strukturierten HGB-Mapping mit Prüfungs-Export.
+Streamlit-App fuer den Weg von einer Summen- und Saldenliste zu einem strukturierten HGB-Mapping mit Pruefungs-Export, Abschlussansicht und KI-Interpretation.
 
 ## Start
 
@@ -11,68 +11,75 @@ streamlit run app.py
 
 ## Nutzung
 
-1. Mandant und Abschlussjahr festlegen.
+1. Mandant, Abschlussjahr und Gesellschaft/Einheit auswaehlen oder anlegen.
 2. Mandanten-Onboarding und Reporting-Profil pflegen.
-3. Master-Mapping auswählen, als Excel-Datei hochladen oder optional aus Supabase laden.
-4. Eine oder mehrere Mandanten-SuSa-Dateien hochladen.
-5. Mapping starten und Klärungsposten prüfen.
+3. Master-Mapping auswaehlen, hochladen oder aus Supabase laden.
+4. Eine oder mehrere SuSa-Dateien je Gesellschaft/Einheit hochladen.
+5. Mapping starten und Klaerungsposten pruefen.
 6. Abschlussansicht kontrollieren.
-7. Interpretation nutzen, um Auffälligkeiten, Kontentreiber und eine KI-Arbeitsgrundlage für Anhang, Lagebericht und Management-Reporting zu erzeugen.
+7. KI-Interpretation fuer Management, Anhang, Lagebericht, Rueckfragen oder Pruefungsnotiz erzeugen.
 8. Excel-Export erzeugen.
 
-Wenn kein Master-Mapping vorhanden ist, nutzt die App lokale Fallback-Regeln aus `mapping.py`. Diese Treffer werden als `Vorschlag` markiert und sollten fachlich geprüft werden, bevor sie dauerhaft ins Master-Mapping übernommen werden.
+Wenn kein Master-Mapping vorhanden ist, nutzt die App lokale Fallback-Regeln aus `mapping.py`. Diese Treffer werden als `Vorschlag` markiert und sollten fachlich geprueft werden, bevor sie dauerhaft ins Master-Mapping uebernommen werden.
 
-## Mehrere Master-Mappings
+## Supabase
 
-Für mehrere Master-Mappings in Supabase braucht die Tabelle `master_mapping` zusätzlich die Spalte `mapping_name` und einen eindeutigen Schlüssel auf `mapping_name` + `konto_nr`.
+Fuer mehrere Master-Mappings in Supabase braucht die Tabelle `master_mapping` die Spalte `mapping_name` und einen eindeutigen Schluessel auf `mapping_name` + `konto_nr`. Die Datei `supabase_master_mapping_migration.sql` enthaelt die noetigen SQL-Befehle.
 
-Die Datei `supabase_master_mapping_migration.sql` enthält die dafür nötigen SQL-Befehle. Ohne diese Migration funktioniert weiterhin das bisherige Standard-Mapping.
+Fuer die Mandantenfaehigkeit bitte `supabase_relational_model.sql` im Supabase SQL Editor ausfuehren. Das Skript legt die Struktur Mandant -> Abschlussjahr -> Gesellschaft/Einheit -> SuSa, Mapping, Onboarding, KI-Erlaeuterungen und Audit Log an.
 
-## Mandantenfähigkeit
+Falls Row Level Security den Zugriff blockiert, danach `supabase_relational_rls_policies.sql` ausfuehren. Diese Policies sind einfache App-Policies fuer den internen Betrieb und sollten vor produktiver Multi-User-Nutzung mandanten- und benutzerspezifisch gehaertet werden.
 
-Die Datei `supabase_mandant_management.sql` legt die Tabellen für Mandanten, Abschlussjahre, SuSa-Metadaten, Onboarding-Antworten, Reporting-Profile, Mapping-Memory und Audit-Log an.
+Wenn der Supabase SQL Editor lange Skripte beim Einfuegen abschneidet, fuehre stattdessen diese vier kurzen Dateien nacheinander aus:
 
-Die App bleibt lauffähig, wenn diese Tabellen noch fehlen. In diesem Fall zeigt sie eine verständliche Supabase-Meldung und der bisherige Upload-/Mapping-Workflow bleibt nutzbar.
+1. `supabase_upgrade_part_1_core.sql`
+2. `supabase_upgrade_part_2_susa_mapping.sql`
+3. `supabase_upgrade_part_3_ai_audit.sql`
+4. `supabase_upgrade_part_4_rls.sql`
 
-Wenn Supabase meldet, dass Row Level Security den Zugriff blockiert, führe zusätzlich `supabase_rls_policies.sql` aus. Das Skript legt einfache App-Policies an. Für produktive Multi-User-Setups sollten diese Policies später mandanten- und benutzerspezifisch gehärtet werden.
+Die App bleibt lauffaehig, wenn Tabellen noch fehlen. In diesem Fall zeigt sie eine verstaendliche Supabase-Meldung und der bisherige Upload-/Mapping-Workflow bleibt nutzbar.
 
-Neue Navigation:
+## Navigation
 
 1. Willkommen
 2. Mandanten
 3. Onboarding
 4. Upload & Mapping
-5. Prüfen
+5. Pruefen
 6. Abschlussansicht
 7. Interpretation
 8. Export
 
-Mandanten werden über die Auswahl sofort aktiv gesetzt. Für eine Neuanlage muss in der Mandantenmaske `Neuen Mandanten anlegen` aktiviert werden, damit kein bestehender Mandant überschrieben wird.
+Die Seite `Mandanten` zeigt eine Matrix:
+
+Mandant | Jahr | Gesellschaft | SuSa vorhanden | Mapping vorhanden | Onboarding vorhanden | KI-Erlaeuterung vorhanden | Status.
+
+Der aktive Mandant, das aktive Jahr und die aktive Einheit werden in Sidebar und Header angezeigt.
+
+## Streamlit Secrets
+
+```toml
+SUPABASE_URL = "https://..."
+SUPABASE_KEY = "..."
+OPENAI_API_KEY = "sk-..."
+APP_USER = "dein-name"
+```
+
+Der OpenAI-Key gehoert nicht in `app.py` und nicht ins Repository. Die App nutzt die OpenAI Responses API und kann neuere GPT-5-Modelle sowie 4er-Modelle wie `gpt-4.1`, `gpt-4.1-mini`, `gpt-4o`, `gpt-4o-mini` und `gpt-4` verwenden.
 
 ## Musterdateien
 
 Im Ordner `templates` liegen ein Muster-Kontenmapping und eine Muster-SuSa. Die App bietet beide Dateien im Bereich `Upload & Mapping` als Download an.
 
-## KI-gestützte Interpretation
+## Export
 
-Die Phase `Interpretation` erzeugt zunächst eine strukturierte Zahlenbasis: auffällige Abschlusspositionen, größte Kontentreiber, absolute und prozentuale Veränderungen sowie einen vorsichtig formulierten Prompt. Dieser Prompt kann als Grundlage für Anhang, Lagebericht und Management-Reporting genutzt und in ein KI-System übernommen werden.
+Der Excel-Export enthaelt Rohdaten, Mapping-Ergebnis, Klaerungsposten, Bilanz/GuV sowie zusaetzlich Mandantenuebersicht, Gesellschaften, Onboarding, SuSa-Uploads, KI-Erlaeuterungen und Audit Log.
 
-Die Interpretation ersetzt keine fachliche Prüfung. Sachverhalte, Ursachen und Ereignisse nach dem Stichtag müssen weiterhin durch Rechnungswesen oder Mandant bestätigt werden.
+## Test
 
-### OpenAI-Anbindung
-
-Für die direkte KI-Erzeugung in der App muss der API-Key als Streamlit Secret hinterlegt werden:
-
-```toml
-OPENAI_API_KEY = "sk-..."
-```
-
-Der Key gehört nicht in `app.py` und nicht ins Repository. Die App nutzt die OpenAI Responses API und erzeugt aus der strukturierten Zahlenbasis einen Entwurf für Management-Reporting, Anhang-Hinweise, Lagebericht-Hinweise und Rückfragen.
-
-In der App können neuere GPT-5-Modelle sowie ältere 4er-Modelle ausgewählt werden, unter anderem `gpt-4.1`, `gpt-4.1-mini`, `gpt-4o`, `gpt-4o-mini` und `gpt-4`. Während der Erstellung zeigt die App eine Schrittanzeige von der Zahlenbasis bis zur fertigen Antwort.
-
-Der OpenAI-Entwurf kann als Word-Datei (`.docx`) heruntergeladen werden.
-
-## Erwartete Spalten
-
-Die App erkennt typische Kontospalten wie `Konto`, `Kontonummer`, `KontoNr` oder `Account`. Wertspalten werden über Begriffe wie `Saldo`, `Betrag`, `Wert`, `Summe`, `Soll`, `Haben`, `Debit`, `Credit` oder Jahreszahlen erkannt.
+1. Streamlit-App starten.
+2. In Supabase `supabase_relational_model.sql` und bei Bedarf `supabase_relational_rls_policies.sql` ausfuehren.
+3. Mandant anlegen, Jahr anlegen, Gesellschaft anlegen.
+4. Muster-Mapping und Muster-SuSa laden.
+5. Mapping starten, Klaerungsposten bearbeiten, Abschlussansicht und Interpretation pruefen.
+6. Excel-Export herunterladen und die Zusatzblaetter kontrollieren.
