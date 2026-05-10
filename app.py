@@ -1,4 +1,5 @@
 import io
+import html
 import re
 from datetime import datetime
 from pathlib import Path
@@ -435,6 +436,95 @@ def build_pivot(df: pd.DataFrame, group_level: int, value_cols: list[str]) -> pd
     if not ausweis_cols:
         return pd.DataFrame()
     return df.groupby(ausweis_cols, dropna=False)[value_cols].sum().reset_index()
+
+
+def _tree_amounts(row: pd.Series, value_cols: list[str]) -> str:
+    return " | ".join(f"{html.escape(str(c))}: {format_de_number(row.get(c, 0))}" for c in value_cols)
+
+
+def _leaf_table_html(df: pd.DataFrame, value_cols: list[str]) -> str:
+    header = "<tr><th>Konto-Nr.</th><th>Kontobezeichnung</th>"
+    header += "".join(f"<th>{html.escape(str(c))}</th>" for c in value_cols)
+    header += "</tr>"
+
+    rows = []
+    for _, row in df.sort_values("KontoNr").iterrows():
+        cells = [
+            html.escape(str(row.get("KontoNr", ""))),
+            html.escape(str(row.get("Kontobezeichnung", ""))),
+        ]
+        cells.extend(format_de_number(row.get(c, 0)) for c in value_cols)
+        rows.append("<tr>" + "".join(f"<td>{cell}</td>" for cell in cells) + "</tr>")
+
+    return f"<table class='lumina-tree-table'>{header}{''.join(rows)}</table>"
+
+
+def _tree_node_html(df: pd.DataFrame, levels: list[str], value_cols: list[str], depth: int = 0) -> str:
+    if not levels:
+        return _leaf_table_html(df, value_cols)
+
+    col = levels[0]
+    parts = []
+    for label, group in df.groupby(col, dropna=False, sort=True):
+        label_text = str(label).strip() if str(label).strip() else "(ohne weitere Untergliederung)"
+        sums = group[value_cols].sum(numeric_only=True)
+        summary = f"{html.escape(label_text)} <span>{len(group)} Konto/Konten | {_tree_amounts(sums, value_cols)}</span>"
+        open_attr = " open" if depth < 1 else ""
+        parts.append(
+            f"<details class='lumina-tree-level level-{depth}'{open_attr}>"
+            f"<summary>{summary}</summary>"
+            f"{_tree_node_html(group, levels[1:], value_cols, depth + 1)}"
+            f"</details>"
+        )
+    return "".join(parts)
+
+
+def tree_view_html(df: pd.DataFrame, value_cols: list[str]) -> str:
+    ausweis_cols = [f"Ausweis_{i}" for i in range(1, 8) if f"Ausweis_{i}" in df.columns]
+    tree_df = df.copy()
+    for col in ausweis_cols:
+        tree_df[col] = tree_df[col].fillna("").astype(str).str.strip()
+    tree_df = tree_df[tree_df["KontoNr"].astype(str).str.strip() != ""].copy()
+
+    return f"""
+    <style>
+    .lumina-tree details {{
+        border-left: 1px solid #e5e7eb;
+        margin: 0.18rem 0 0.18rem 0.9rem;
+        padding-left: 0.7rem;
+    }}
+    .lumina-tree summary {{
+        cursor: pointer;
+        padding: 0.45rem 0.3rem;
+        font-weight: 650;
+        color: #1f2937;
+    }}
+    .lumina-tree summary span {{
+        color: #6b7280;
+        font-weight: 400;
+        margin-left: 0.75rem;
+        font-size: 0.9rem;
+    }}
+    .lumina-tree-table {{
+        border-collapse: collapse;
+        width: 100%;
+        margin: 0.25rem 0 0.8rem 1.2rem;
+        font-size: 0.92rem;
+    }}
+    .lumina-tree-table th, .lumina-tree-table td {{
+        border-bottom: 1px solid #e5e7eb;
+        padding: 0.35rem 0.5rem;
+        text-align: left;
+    }}
+    .lumina-tree-table td:nth-child(n+3), .lumina-tree-table th:nth-child(n+3) {{
+        text-align: right;
+        white-space: nowrap;
+    }}
+    </style>
+    <div class="lumina-tree">
+        {_tree_node_html(tree_df, ausweis_cols, value_cols)}
+    </div>
+    """
 
 
 def _is_excel_value_column(header) -> bool:
@@ -933,18 +1023,25 @@ elif phase == "5 Abschlussansicht":
         df = st.session_state.mapped.copy()
         value_cols = st.session_state.meta.get("value_cols", detect_value_cols(df))
 
-        level = st.slider("Aggregationsebene", min_value=1, max_value=7, value=5)
-        pivot = build_pivot(df, level, value_cols)
-
-        if pivot.empty:
-            st.error("Keine auswertbare Ausweisstruktur gefunden.")
-        else:
-            st.dataframe(display_dataframe(pivot, value_cols), use_container_width=True, hide_index=True)
-            if value_cols:
+        tree_tab, pivot_tab = st.tabs(["Baumansicht", "Pivot-Tabelle"])
+        with tree_tab:
+            if not value_cols:
+                st.error("Keine Wertspalten gefunden.")
+            else:
+                st.markdown(tree_view_html(df, value_cols), unsafe_allow_html=True)
                 st.markdown("### Summen")
                 cols = st.columns(min(len(value_cols), 4))
                 for i, c in enumerate(value_cols[:4]):
-                    cols[i].metric(str(c), format_de_amount(pivot[c].sum(), "EUR"))
+                    cols[i].metric(str(c), format_de_amount(df[c].sum(), "EUR"))
+
+        with pivot_tab:
+            level = st.slider("Aggregationsebene", min_value=1, max_value=7, value=5)
+            pivot = build_pivot(df, level, value_cols)
+
+            if pivot.empty:
+                st.error("Keine auswertbare Ausweisstruktur gefunden.")
+            else:
+                st.dataframe(display_dataframe(pivot, value_cols), use_container_width=True, hide_index=True)
 
 
 # ------------------------------------------------------------
