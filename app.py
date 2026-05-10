@@ -118,8 +118,43 @@ elif phase == "5: Abschluss prüfen":
 
 
 elif phase == "6: Export & Versand":
-    st.header("Phase 6: Export")
-    st.button("Banken-PDF erstellen")
+    st.header("Phase 6: Finaler Export & Bericht")
+    
+    if 'susa_data' in st.session_state:
+        df = st.session_state['susa_data']
+        gemappt = df[df['Ausweis_4'] != "Nicht zugeordnet"]
+        
+        st.subheader("Ihr LUMINA-Abschlussbericht")
+        st.write("Der Bericht enthält den Audit-Trail und die aggregierte HGB-Bilanz.")
+        
+        # Erstellung eines einfachen Text-Berichts für den Download
+        bilanz_sum = gemappt.iloc[:, 2].sum()
+        report_content = f"""
+        LUMINA ABSCHLUSS-BERICHT 2025
+        =============================
+        Mandant: Beispiel GmbH
+        Datum: 10.05.2026
+        
+        BILANZ-ERGEBNIS (AKTIVA):
+        Gesamtsumme: {bilanz_sum:,.2f} €
+        
+        POSITIONEN:
+        """
+        for _, row in gemappt.groupby('Ausweis_4').sum(numeric_only=True).iterrows():
+            report_content += f"\n- {row.name}: {row.iloc[0]:,.2f} €"
+            
+        st.download_button(
+            label="📥 Bericht als Text-Datei herunterladen",
+            data=report_content,
+            file_name="Lumina_Abschluss_2025.txt",
+            mime="text/plain"
+        )
+        
+        st.success("Bericht wurde erfolgreich generiert. Sie können diesen nun an Ihre Bank oder Ihren Steuerberater übermitteln.")
+        st.balloons()
+    else:
+        st.warning("Bitte schließen Sie zuerst Phase 3 bis 5 ab.")
+
 
 
 
