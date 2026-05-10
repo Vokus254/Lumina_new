@@ -82,41 +82,52 @@ elif phase == "3: Zahlen hochladen (SuSa)":
             st.error("Konnte Kontospalten nicht finden. Bitte prüfen Sie die Dateien.")
 
 elif phase == "4: Prüfen & Optimieren":
-    st.header("Phase 4: Lücken-Analyse & Qualitätssicherung")
+    st.header("Phase 4: Lücken-Analyse & Massen-Zuweisung")
     
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data']
         
-        # 1. Technische Analyse
-        with st.expander("🔍 Technische Spalten-Analyse"):
-            st.write("Verfügbare Spalten:", list(df.columns))
-        
-        # 2. Mapping-Spalten finden
+        # Mapping-Ebenen finden
         ausweis_cols = [c for c in df.columns if 'ausweis' in str(c).lower()]
+        a1_col = ausweis_cols if ausweis_cols else None
         
-        if ausweis_cols:
-            # Suche Zeilen, die in der ersten Ausweis-Ebene leer sind
-            first_a = ausweis_cols[0]
-            luecken = df[df[first_a].isna() | (df[first_a] == "Nicht zugeordnet")].copy()
+        if a1_col:
+            # 1. Lücken identifizieren
+            luecken = df[df[a1_col].isna() | (df[a1_col] == "Nicht zugeordnet")].copy()
             
             if not luecken.empty:
-                st.error(f"Achtung: {len(luecken)} Konten aus der SuSa wurden im Master-Mapping nicht gefunden!")
+                st.error(f"Gefunden: {len(luecken)} Konten ohne Zuordnung.")
                 
-                # Identifiziere Spalten für die Anzeige dynamisch
-                k_col = next((c for c in luecken.columns if 'konto' in str(c).lower()), luecken.columns[0])
-                b_col = next((c for c in luecken.columns if 'bezeich' in str(c).lower()), None)
+                # 2. DAS MASSEN-TOOL
+                st.subheader("⚡ Quick-Fix: Massen-Zuweisung")
+                col1, col2, col3 = st.columns([1, 2, 1])
                 
-                # Nur vorhandene Spalten anzeigen
-                cols_to_show = [c for c in [k_col, b_col] if c is not None]
-                st.dataframe(luecken[cols_to_show], hide_index=True)
-                
-                st.info("💡 Diese Konten fehlen in deinem Master-Mapping. Ergänze sie dort, um eine vollständige Bilanz zu erhalten.")
+                with col1:
+                    prefix = st.text_input("Konten-Präfix (z.B. 211)", help="Alle Konten, die hiermit beginnen, werden gemappt.")
+                with col2:
+                    target_pos = st.selectbox("Ziel-Position (Ebene 4):", 
+                                            ["Sonderposten (SOPO)", "Eigenkapital", "Verbindlichkeiten", "Umlaufvermögen"])
+                with col3:
+                    st.write(" ") # Platzhalter
+                    if st.button("Zuweisung ausführen"):
+                        # Logik: Suche alle Konten mit dem Präfix und setze den Wert
+                        mask = df['KontoNr'].str.startswith(prefix)
+                        df.loc[mask, a1_col] = "Bilanz" # Beispiel Ebene 1
+                        df.loc[mask, ausweis_cols] = "Passiva" # Beispiel Ebene 2
+                        df.loc[mask, ausweis_cols] = target_pos # Beispiel Ebene 4
+                        
+                        st.session_state['susa_data'] = df
+                        st.success(f"Erfolg! Konten mit Präfix '{prefix}' wurden zugewiesen.")
+                        st.rerun()
+
+                st.divider()
+                # 3. Anzeige der restlichen Lücken
+                st.dataframe(luecken[['KontoNr', 'Kontobezeichnung_x']], hide_index=True)
             else:
-                st.success("✅ Alle Konten der SuSa sind im Master-Mapping hinterlegt.")
-        else:
-            st.warning("Keine Mapping-Ebenen gefunden. Prüfe das Master-File in Phase 3.")
+                st.success("✅ Alle Konten sind erfolgreich gemappt.")
     else:
         st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
+
 
 
 elif phase == "5: Abschluss prüfen":
