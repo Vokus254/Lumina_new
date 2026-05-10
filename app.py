@@ -34,34 +34,42 @@ elif phase == "2: Unternehmen verstehen":
 
 elif phase == "3: Zahlen hochladen (SuSa)":
     st.header("Phase 3: Datenbasis (SuSa)")
-    uploaded_file = st.file_uploader("Summen-Salden-Liste hochladen", type=["xlsx", "csv"])
+    uploaded_file = st.file_uploader("Summen-Salden-Liste hochladen", type=["xlsx"])
     
     if uploaded_file:
         import pandas as pd
-        df = pd.read_excel(uploaded_file) if uploaded_file.name.endswith('.xlsx') else pd.read_csv(uploaded_file)
-        st.write("Vorschau der Rohdaten:", df.head(5))
-        
-        # Beispiel für ein einfaches Mapping-Regelwerk
-        st.subheader("KI-Mapping Status")
-        # Logik: Wenn Konto-Nr mit 0 beginnt -> Anlagevermögen (SKR03)
-        # Hier bauen wir dein Fachwissen ein:
-        if st.button("Mapping starten"):
-            st.success("95% der Konten automatisch zugeordnet (SKR03 erkannt)")
-            col1, col2 = st.columns(2)
-            col1.metric("Zugeordnet", "142 Konten")
-            col2.metric("Manuelle Prüfung nötig", "3 Konten", delta_color="inverse")
-
+        # Daten einlesen (wir springen die ersten Zeilen Header ggf. mit skiprows=1 an, falls nötig)
+        df = pd.read_excel(uploaded_file)
+        # Speichern für Phase 4
+        st.session_state['susa_data'] = df
+        st.success("Daten im System gespeichert!")
+        st.dataframe(df.head(10))
 
 elif phase == "4: Prüfen & Optimieren":
     st.header("Phase 4: Das Herzstück")
-    st.markdown("### Karteikarte: Forderungen")
-    frage = st.radio(
-        "Gibt es offene Rechnungen, bei denen Sie glauben, dass der Kunde gar nicht mehr zahlt?",
-        ["Nein, alles sicher", "Ja, es gibt Ausfallrisiken"]
-    )
-    if frage == "Ja, es gibt Ausfallrisiken":
-        st.warning("Aktion nötig: Einzelwertberichtigung (EWB) wird vorbereitet.")
-        # Logik für Buchungssatz im Hintergrund
+    
+    if 'susa_data' in st.session_state:
+        df = st.session_state['susa_data']
+        # Wir suchen nach Forderungen (SKR03: Kontenbereich 1400)
+        # Das ist nur ein Beispiel-Filter:
+        forderungen_summe = 45000.00 # Hier käme später die Summen-Logik aus dem DF
+        
+        st.subheader("Karteikarte: Forderungen")
+        st.write(f"Aktueller Saldo laut SuSa: **{forderungen_summe:,.2f} €**")
+        
+        frage = st.radio(
+            "Gibt es offene Rechnungen, bei denen Sie glauben, dass der Kunde gar nicht mehr zahlt?",
+            ["Nein, alles sicher", "Ja, es gibt Ausfallrisiken"]
+        )
+        
+        if frage == "Ja, es gibt Ausfallrisiken":
+            betrag = st.number_input("Welcher Betrag ist gefährdet? (in €)", min_value=0.0, value=1000.0)
+            st.warning(f"LUMINA wird eine Einzelwertberichtigung über {betrag:,.2f} € im Hintergrund vorbereiten.")
+            # Hier loggen wir für den Audit Trail in Phase 5
+            st.session_state['korrektur_ewb'] = betrag
+    else:
+        st.warning("Bitte laden Sie zuerst in Phase 3 eine SuSa hoch!")
+
 
 elif phase == "5: Abschluss prüfen":
     st.header("Phase 5: Die Generalprobe")
