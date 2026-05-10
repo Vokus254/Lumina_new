@@ -66,52 +66,63 @@ elif phase == "3: Zahlen hochladen (SuSa)":
     col1, col2 = st.columns(2)
     with col1:
         map_file = st.file_uploader("1. Master-Mapping Excel (Optional)", type=["xlsx"])
-        # BUTTON ZUM LADEN AUS DER CLOUD
         if st.button("Mapping aus Cloud laden ☁️"):
             with st.spinner("Lade Daten aus Supabase..."):
                 res = supabase.table("master_mapping").select("*").execute()
                 if res.data:
                     df_cloud = pd.DataFrame(res.data)
-                    # Wir harmonisieren die Spaltennamen für die App
+                    # Spaltennamen harmonisieren (DB-Klein zu App-Groß)
                     df_cloud = df_cloud.rename(columns={'konto_nr': 'KontoNr'})
                     for i in range(1, 8):
                         df_cloud = df_cloud.rename(columns={f'ausweis_{i}': f'Ausweis_{i}'})
                     st.session_state['master_map'] = df_cloud
                     st.success(f"{len(df_cloud)} Konten aus der Cloud geladen!")
                 else:
-                    st.warning("Keine Mapping-Daten in der Cloud gefunden.")
+                    st.warning("Keine Daten in der Cloud.")
 
     with col2:
         susa_file = st.file_uploader("2. Mandanten-SuSa Excel", type=["xlsx"])
 
-    # LOGIK: Welches Mapping nutzen wir?
+    # LOGIK: Welches Mapping nehmen wir?
     if map_file:
         df_map = get_clean_df(map_file)
         st.session_state['master_map'] = df_map
         st.info("Nutze hochgeladenes Excel-Mapping.")
-    
+
     if susa_file and 'master_map' in st.session_state:
         df_susa = get_clean_df(susa_file)
         df_map = st.session_state['master_map']
         
-        # --- JOIN & VERARBEITUNG ---
-        # (Hier folgt dein bekannter Join-Code...)
+        # Kontonummern für den Join vorbereiten
         k_susa = next((c for c in df_susa.columns if 'konto' in str(c).lower()), None)
         df_susa[k_susa] = df_susa[k_susa].astype(str).str.strip().str.replace('.0', '', regex=False)
         df_map['KontoNr'] = df_map['KontoNr'].astype(str).str.strip().str.replace('.0', '', regex=False)
         
+        # VERKNÜPFUNG
         df_final = pd.merge(df_susa, df_map, left_on=k_susa, right_on='KontoNr', how='left')
         
-        # Speichern für Phase 4-6
+        # Reinigung & Klärungsposten
+        ausweis_cols = [c for c in df_final.columns if 'Ausweis' in str(c)]
+        for col in ausweis_cols:
+            df_final[col] = df_final[col].fillna("9. KLÄRUNGSPOSTEN (Mapping fehlt)")
+        
+        wert_cols = [c for c in df_final.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
+        for c in wert_cols:
+            df_final[c] = df_final[c].apply(clean_currency)
+        
         st.session_state['susa_data'] = df_final
-        st.success("Daten verarbeitet und bereit zur Bearbeitung!")
+        st.success("Daten verarbeitet!")
         st.dataframe(df_final.head(10))
 
-        # SPEICHER-BUTTON (für Updates)
-        if st.button("Aktuellen Stand in Cloud sichern (Überschreiben)"):
-            with st.spinner("Synchronisiere mit Supabase..."):
-                # Hier nutzt du deinen bestehenden Upsert-Code von vorhin
-                st.success("Cloud-Version wurde aktualisiert!")
+        # SPEICHER-OPTION
+        if st.button("Diesen Stand als neue Cloud-Version sichern"):
+            with st.spinner("Synchronisiere..."):
+                for _, row in df_map.iterrows():
+                    m_data = {"konto_nr": str(row['KontoNr'])}
+                    for i in range(1, 8):
+                        m_data[f"ausweis_{i}"] = str(row.get(f"Ausweis_{i}", "Nicht zugeordnet"))
+                    supabase.table("master_mapping").upsert(m_data).execute()
+                st.success("Cloud-Version aktualisiert!")
 
 
 elif phase == "4: Prüfen & Optimieren":
