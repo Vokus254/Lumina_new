@@ -181,67 +181,65 @@ elif phase == "5: Abschluss prüfen":
 
 
 elif phase == "6: Export & Versand":
-    st.header("Phase 6: Export & Finaler Bericht")
+    st.header("Phase 6: Finaler Export & Bericht")
     
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data'].copy()
-        
-        # 1. Spalten identifizieren
         df.columns = [str(c).strip() for c in df.columns]
+        
+        # 1. Daten aggregieren wie in Phase 5
         ausweis_cols = [c for c in df.columns if 'ausweis' in c.lower()]
         wert_cols = [c for c in df.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
         
-        if wert_cols and ausweis_cols:
-            # Aggregierte Daten für den Export erstellen
+        if ausweis_cols and wert_cols:
+            # Vorzeichen-Logik anwenden
+            a2_col = next((c for c in ausweis_cols if '2' in c), None)
+            for c in wert_cols:
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+                if a2_col:
+                    df[c] = df.apply(lambda r: r[c] * -1 if any(x in str(r[a2_col]) for x in ['Passiva', 'GuV']) else r[c], axis=1)
+            
             export_df = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
+
+            st.success("Bericht-Formate generiert.")
             
-            st.success("Export-Dokumente wurden generiert.")
-            
-            col1, col2 = st.columns(2)
-            
-            # --- EXCEL EXPORT ---
+            # --- EXCEL DOWNLOAD ---
             import io
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                export_df.to_excel(writer, index=False, sheet_name='LUMINA_Bericht')
+                export_df.to_excel(writer, index=False, sheet_name='LUMINA_Abschluss')
             
-            with col1:
-                st.download_button(
-                    label="📥 Als Excel (.xlsx) herunterladen",
-                    data=buffer.getvalue(),
-                    file_name="LUMINA_Abschluss_2025.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-                st.caption("Ideal für die Weiterverarbeitung im Controlling.")
+            st.download_button(
+                label="📥 Bilanz-Bericht (.xlsx) herunterladen",
+                data=buffer.getvalue(),
+                file_name="LUMINA_Bericht_2025.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
-            # --- PDF EXPORT (Protokoll-Stil) ---
+            # --- PDF DOWNLOAD ---
             from fpdf import FPDF
             pdf = FPDF()
             pdf.add_page()
-            pdf.set_font("helvetica", "B", 16)
-            pdf.cell(0, 10, "LUMINA Abschluss-Protokoll 2025", ln=True, align='C')
-            pdf.set_font("helvetica", size=10)
-            pdf.ln(10)
+            pdf.set_font("helvetica", "B", 14)
+            pdf.cell(0, 10, "LUMINA HGB-Abschlussbericht 2025", ln=True, align='C')
+            pdf.ln(5)
+            pdf.set_font("helvetica", size=9)
             
-            for index, row in export_df.head(20).iterrows():
-                # Kurze Zusammenfassung der Hauptebenen für das PDF
-                line = f"{row.iloc[0]} | {row.iloc[2]} | {row[wert_cols[0]]:,.2f} €"
-                pdf.cell(0, 8, line.encode('latin-1', 'replace').decode('latin-1'), ln=True)
-            
-            with col2:
-                st.download_button(
-                    label="📄 Als PDF-Bericht herunterladen",
-                    data=bytes(pdf.output()),
-                    file_name="LUMINA_Protokoll.pdf",
-                    mime="application/pdf"
-                )
-                st.caption("Offizielles Protokoll für die Dokumentation.")
-                
+            # Einfache PDF-Tabelle
+            for index, row in export_df.iterrows():
+                txt = f"{row.iloc} | {row.iloc} | {row[wert_cols]:,.2f} EUR"
+                pdf.cell(0, 7, txt.encode('latin-1', 'replace').decode('latin-1'), border=1, ln=True)
+
+            st.download_button(
+                label="📄 PDF-Protokoll herunterladen",
+                data=bytes(pdf.output()),
+                file_name="LUMINA_Protokoll.pdf",
+                mime="application/pdf"
+            )
             st.balloons()
-        else:
-            st.error("Es konnten keine strukturierten Daten für den Export gefunden werden.")
     else:
-        st.warning("Keine Daten zum Exportieren vorhanden. Bitte Phase 3 abschließen.")
+        st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
+
 
 
 
