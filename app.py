@@ -109,6 +109,40 @@ def parse_number(value) -> float:
         return 0.0
 
 
+def format_de_number(value) -> str:
+    """Formatiert Zahlen für die App-Anzeige im deutschen Format: 10.005,56."""
+    if pd.isna(value):
+        return ""
+    try:
+        return f"{float(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def format_de_amount(value, suffix: str = "") -> str:
+    formatted = format_de_number(value)
+    return f"{formatted} {suffix}".strip()
+
+
+def display_dataframe(df: pd.DataFrame, value_cols: list[str] | None = None):
+    if value_cols is None:
+        value_cols = detect_value_cols(df)
+    formatters = {c: format_de_number for c in value_cols if c in df.columns}
+    if not formatters:
+        return df
+    return df.style.format(formatters)
+
+
+def normalize_column_name(value) -> str:
+    if isinstance(value, (datetime, pd.Timestamp)):
+        return value.strftime("%d.%m.%Y")
+    text = str(value).strip()
+    parsed = pd.to_datetime(text, errors="coerce")
+    if not pd.isna(parsed) and re.fullmatch(r"\d{4}-\d{2}-\d{2}( 00:00:00)?", text):
+        return parsed.strftime("%d.%m.%Y")
+    return text
+
+
 def read_excel_smart(uploaded_file) -> pd.DataFrame:
     """Liest Excel und sucht die wahrscheinlich richtige Kopfzeile."""
     raw = pd.read_excel(uploaded_file, header=None, dtype=object)
@@ -123,7 +157,7 @@ def read_excel_smart(uploaded_file) -> pd.DataFrame:
     uploaded_file.seek(0)
     df = pd.read_excel(uploaded_file, header=header_row, dtype=object)
     df = df.dropna(how="all")
-    df.columns = [str(c).strip() for c in df.columns]
+    df.columns = [normalize_column_name(c) for c in df.columns]
     return df
 
 
@@ -301,6 +335,30 @@ def build_pivot(df: pd.DataFrame, group_level: int, value_cols: list[str]) -> pd
     return df.groupby(ausweis_cols, dropna=False)[value_cols].sum().reset_index()
 
 
+def _is_excel_value_column(header) -> bool:
+    name = str(header).lower()
+    if "konto" in name or "bezeichnung" in name or "text" in name:
+        return False
+    return any(x in name for x in ["saldo", "betrag", "wert", "summe", "202", "31.12", "haben", "soll", "debit", "credit", "balance"])
+
+
+def _format_excel_numbers(workbook):
+    number_format = '#,##0.00;[Red]-#,##0.00;0.00'
+    for ws in workbook.worksheets:
+        headers = [cell.value for cell in ws[1]]
+        value_columns = {
+            idx
+            for idx, header in enumerate(headers, start=1)
+            if _is_excel_value_column(header)
+        }
+
+        for row in ws.iter_rows(min_row=2):
+            for cell in row:
+                if cell.column in value_columns and isinstance(cell.value, (int, float)):
+                    cell.number_format = number_format
+                    cell.alignment = cell.alignment.copy(horizontal="right")
+
+
 def excel_export(susa_raw: pd.DataFrame, mapped: pd.DataFrame, pivot: pd.DataFrame, klarung: pd.DataFrame) -> bytes:
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -310,6 +368,7 @@ def excel_export(susa_raw: pd.DataFrame, mapped: pd.DataFrame, pivot: pd.DataFra
         pivot.to_excel(writer, sheet_name="04_Bilanz_GuV", index=False)
 
         workbook = writer.book
+        _format_excel_numbers(workbook)
         for ws in workbook.worksheets:
             ws.freeze_panes = "A2"
             for col_cells in ws.columns:
@@ -549,7 +608,7 @@ elif phase == "3 Upload & Mapping":
                 st.session_state.meta = meta
                 st.success(f"SuSa geladen: {len(norm)} Konten.")
                 st.write("Erkannte Spalten:", meta)
-                st.dataframe(norm.head(20), use_container_width=True, hide_index=True)
+                st.dataframe(display_dataframe(norm.head(20), meta["value_cols"]), use_container_width=True, hide_index=True)
             except Exception as e:
                 st.error(str(e))
 
@@ -565,7 +624,7 @@ elif phase == "3 Upload & Mapping":
             count_klarung = int((st.session_state.mapped["Mapping_Status"] == "Klärung").sum())
             count_vorschlag = int((st.session_state.mapped["Mapping_Status"] == "Vorschlag").sum())
             st.success(f"Mapping abgeschlossen. Vorschläge: {count_vorschlag}. Klärungsposten: {count_klarung}")
-            st.dataframe(st.session_state.mapped.head(50), use_container_width=True, hide_index=True)
+            st.dataframe(display_dataframe(st.session_state.mapped.head(50), st.session_state.meta.get("value_cols", [])), use_container_width=True, hide_index=True)
 
 
 # ------------------------------------------------------------
@@ -589,7 +648,7 @@ elif phase == "4 Prüfen":
 
         if value_cols and not klarung.empty:
             main_value = value_cols[-1]
-            st.metric("Summe Klärungsposten", f"{klarung[main_value].sum():,.2f} EUR".replace(",", "X").replace(".", ",").replace("X", "."))
+            st.metric("Summe Klärungsposten", format_de_amount(klarung[main_value].sum(), "EUR"))
 
         if klarung.empty:
             st.success("Keine Klärungsposten gefunden.")
@@ -597,10 +656,10 @@ elif phase == "4 Prüfen":
             st.error("Es gibt noch ungeklärte Konten. Diese solltest du im Master-Mapping ergänzen.")
             show_cols = ["KontoNr", "Kontobezeichnung"] + value_cols + [f"Ausweis_{i}" for i in range(1, 8)]
             show_cols = [c for c in show_cols if c in klarung.columns]
-            st.dataframe(klarung[show_cols], use_container_width=True, hide_index=True)
+            st.dataframe(display_dataframe(klarung[show_cols], value_cols), use_container_width=True, hide_index=True)
 
         with st.expander("Vollständiges Mapping-Ergebnis anzeigen"):
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(display_dataframe(df, value_cols), use_container_width=True, hide_index=True)
 
 
 # ------------------------------------------------------------
@@ -621,12 +680,12 @@ elif phase == "5 Abschlussansicht":
         if pivot.empty:
             st.error("Keine auswertbare Ausweisstruktur gefunden.")
         else:
-            st.dataframe(pivot, use_container_width=True, hide_index=True)
+            st.dataframe(display_dataframe(pivot, value_cols), use_container_width=True, hide_index=True)
             if value_cols:
                 st.markdown("### Summen")
                 cols = st.columns(min(len(value_cols), 4))
                 for i, c in enumerate(value_cols[:4]):
-                    cols[i].metric(str(c), f"{pivot[c].sum():,.2f} EUR".replace(",", "X").replace(".", ",").replace("X", "."))
+                    cols[i].metric(str(c), format_de_amount(pivot[c].sum(), "EUR"))
 
 
 # ------------------------------------------------------------
@@ -675,3 +734,4 @@ elif phase == "6 Export":
         )
 
         st.info("PDF würde ich erst später ergänzen. Für Wirtschaftsprüfer ist zuerst ein sauberer Excel-Export wertvoller.")
+
