@@ -1560,13 +1560,11 @@ def import_onboarding_excel(
     if not rows:
         return 0, len(created_entities), created_entities, "Keine Antworten zum Import gefunden. Bitte die Spalte 'Antwort' ausfüllen."
 
-    err = supabase_upsert("onboarding_answers", rows)
-    if err:
-        compact_rows = [
-            {k: row[k] for k in ["id", "mandant_id", "reporting_year_id", "entity_id", "section", "question_key", "question_text", "answer", "is_permanent", "updated_at"] if k in row}
-            for row in rows
-        ]
-        err = supabase_upsert("onboarding_answers", compact_rows)
+    compact_rows = [
+        {k: row[k] for k in ["id", "mandant_id", "reporting_year_id", "entity_id", "section", "question_key", "question_text", "answer", "is_permanent", "updated_at"] if k in row}
+        for row in rows
+    ]
+    err = supabase_upsert("onboarding_answers", compact_rows)
     if err:
         legacy_rows = [
             {k: row[k] for k in ["id", "mandant_id", "year_id", "section", "question", "answer", "updated_at"] if k in row}
@@ -2125,13 +2123,11 @@ elif phase == "3 Onboarding":
 
         if save_answers:
             rows = [row for row in answer_rows if row["answer"].strip()]
-            err = supabase_upsert("onboarding_answers", rows) if rows else None
-            if err and rows:
-                compact_rows = [
-                    {k: row[k] for k in ["id", "mandant_id", "reporting_year_id", "entity_id", "section", "question_key", "question_text", "answer", "is_permanent", "updated_at"] if k in row}
-                    for row in rows
-                ]
-                err = supabase_upsert("onboarding_answers", compact_rows)
+            compact_rows = [
+                {k: row[k] for k in ["id", "mandant_id", "reporting_year_id", "entity_id", "section", "question_key", "question_text", "answer", "is_permanent", "updated_at"] if k in row}
+                for row in rows
+            ]
+            err = supabase_upsert("onboarding_answers", compact_rows) if compact_rows else None
             if err and rows:
                 legacy_rows = [
                     {k: row[k] for k in ["id", "mandant_id", "year_id", "section", "question", "answer", "updated_at"] if k in row}
