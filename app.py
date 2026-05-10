@@ -1,6 +1,47 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
+# --- PHASEN-LOGIK ---
+
+if phase == "1: Willkommen":
+    st.header("Willkommen bei LUMINA")
+    st.info("Datenbank-Verbindung zu Supabase ist aktiv.")
+
+elif phase == "2: Unternehmen verstehen":
+    st.header("Phase 2: Unternehmen verstehen")
+    mandant = st.text_input("Mandanten-Name", value="Beispiel GmbH")
+    # Hier muss alles sauber abgeschlossen sein
+
+elif phase == "3: Zahlen hochladen (SuSa)":
+    st.header("Phase 3: Master-Mapping & SuSa")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        map_file = st.file_uploader("1. Master-Mapping Excel", type=["xlsx"])
+    with col2:
+        susa_file = st.file_uploader("2. Mandanten-SuSa Excel", type=["xlsx"])
+
+    # Logik für das Hochladen und Speichern
+    if map_file:
+        df_map = pd.read_excel(map_file) # Einfaches Einlesen für den Test
+        st.success("Master-Mapping geladen.")
+        
+        if st.button("Jetzt dauerhaft in Supabase speichern"):
+            with st.spinner("Übertrage Daten..."):
+                for _, row in df_map.iterrows():
+                    # Wir nutzen .get() um Fehler bei fehlenden Spalten zu vermeiden
+                    mapping_data = {
+                        "konto_nr": str(row.iloc[0]), # Nimmt die erste Spalte als Konto
+                        "ausweis_1": str(row.get("Ausweis_1", "")),
+                        "ausweis_2": str(row.get("Ausweis_2", "")),
+                        "ausweis_3": str(row.get("Ausweis_3", "")),
+                        "ausweis_4": str(row.get("Ausweis_4", "")),
+                        "ausweis_5": str(row.get("Ausweis_5", "")),
+                        "ausweis_6": str(row.get("Ausweis_6", "")),
+                        "ausweis_7": str(row.get("Ausweis_7", ""))
+                    }
+                    supabase.table("master_mapping").upsert(mapping_data).execute()
+                st.success("Mapping ist jetzt in der Cloud gespeichert!")
 
 # 1. DATENBANK-VERBINDUNG (Ganz oben)
 try:
