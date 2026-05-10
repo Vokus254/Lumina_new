@@ -42,7 +42,11 @@ elif phase == "3: Zahlen hochladen (SuSa)":
         # Header in Zeile 2 (Index 1)
         df = pd.read_excel(uploaded_file, header=1)
         df = df.dropna(subset=['KontoNr'])
-        df['KontoNr'] = df['KontoNr'].astype(float).astype(int).astype(str)
+      from mapping import get_dynamic_mapping
+for i in range(1, 8):
+    col_name = f'Ausweis_{i}'
+    df[col_name] = df['KontoNr'].apply(lambda x: get_dynamic_mapping(x).get(col_name, "Nicht zugeordnet"))
+
         
         structure = get_hgb_structure()
         
