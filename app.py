@@ -72,9 +72,36 @@ elif phase == "4: Prüfen & Optimieren":
 
 
 elif phase == "5: Abschluss prüfen":
-    st.header("Phase 5: Die Generalprobe")
-    st.write("Hier sehen Sie die Live-Vorschau Ihrer Bilanz und GuV.")
-    st.button("Audit-Pfad anzeigen")
+    st.header("Phase 5: Die Generalprobe (WYSIWYG)")
+    
+    if 'susa_data' in st.session_state:
+        # 1. Basis-Werte (vereinfacht für den Prototyp)
+        original_forderungen = 45000.00
+        korrektur = st.session_state.get('korrektur_ewb', 0.0)
+        neuer_wert = original_forderungen - korrektur
+        
+        st.subheader("Live-Bilanz (Auszug)")
+        
+        # 2. Vergleichstabelle Vorher/Nachher
+        data = {
+            "Position": ["Forderungen aus L&L", "Gesamtvermögen (Umlauf)"],
+            "SuSa-Wert (€)": [f"{original_forderungen:,.2f}", "120,500.00"],
+            "Korrektur (€)": [f"- {korrektur:,.2f}", f"- {korrektur:,.2f}"],
+            "Bilanz-Wert (€)": [f"{neuer_wert:,.2f}", f"{120500 - korrektur:,.2f}"]
+        }
+        st.table(data)
+        
+        # 3. Der Audit-Trail (für die Prüfer-Sicherheit)
+        with st.expander("Audit-Pfad anzeigen"):
+            st.write(f"**Ereignis:** Einzelwertberichtigung Forderungen")
+            st.write(f"**Grund:** Nutzerangabe in Phase 4 ('Ja, Ausfallrisiken')")
+            st.write(f"**Referenz:** § 252 Abs. 1 Nr. 4 HGB (Vorsichtsprinzip)")
+            st.write(f"**Zeitstempel:** 10.05.2026 - 09:05 Uhr")
+            
+        st.success("Der Bericht ist nun prüfungssicher vorbereitet.")
+    else:
+        st.warning("Keine Daten vorhanden. Bitte Phase 3 und 4 abschließen.")
+
 
 elif phase == "6: Export & Versand":
     st.header("Phase 6: Das Finale")
