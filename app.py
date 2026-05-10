@@ -173,69 +173,44 @@ elif phase == "6: Export & Versand":
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data'].copy()
         df.columns = [str(c) for c in df.columns]
-        saldo_col = next((c for c in df.columns if any(x in str(c) for x in ['2025', 'Saldo', '31.12'])), None)
         
+        # 1. Spalten identifizieren (Aktuell & Vorjahr)
+        # Wir suchen Spalten, die ein Datum oder 'Saldo' enthalten
+        wert_cols = [c for c in df.columns if any(x in c for x in ['2025', '2024', 'Saldo', '31.12'])]
         ausweis_cols = [c for c in df.columns if 'Ausweis' in c]
+        
+        # 2. ZAHLEN SÄUBERN (WICHTIG!)
+        # Entfernt '€', Leerzeichen etc. und macht echte Zahlen daraus
+        for col in wert_cols:
+            df[col] = pd.to_numeric(df[col].astype(str).str.replace('€', '').str.replace('.', '').str.replace(',', '.').str.strip(), errors='coerce').fillna(0)
+
         gemappt = df[df[ausweis_cols].fillna("Nicht zugeordnet") != "Nicht zugeordnet"].copy()
 
         if not gemappt.empty:
-            # Wir nehmen für den Export die ersten 4 Ebenen + Saldo
-            export_cols = ausweis_cols[:4] + [saldo_col]
-            export_df = gemappt.groupby(ausweis_cols[:4])[saldo_col].sum().reset_index()
+            # 3. Aggregieren (Summieren) über alle Wertspalten
+            export_df = gemappt.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
             
-            # --- EXCEL EXPORT (Bleibt gleich, da stabil) ---
+            st.subheader("Vorschau Export-Daten")
+            st.dataframe(export_df.head(10))
+
+            # --- EXCEL EXPORT ---
             import io
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 export_df.to_excel(writer, index=False, sheet_name='LUMINA_Abschluss')
             
             st.download_button(
-                label="📥 Als Excel (.xlsx) herunterladen",
+                label="📥 Excel mit Vorjahreswerten herunterladen",
                 data=buffer.getvalue(),
-                file_name="LUMINA_Abschluss_2025.xlsx",
+                file_name="LUMINA_Abschluss_Vergleich.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
-            # --- PDF EXPORT (KORRIGIERT) ---
-            from fpdf import FPDF
             
-            class PDF(FPDF):
-                def header(self):
-                    self.set_font('helvetica', 'B', 14)
-                    self.cell(0, 10, 'LUMINA Abschlussbericht - HGB Struktur', ln=True, align='C')
-                    self.ln(5)
-
-            pdf = PDF()
-            pdf.add_page()
-            pdf.set_font("helvetica", size=9)
-            
-            # Tabellenkopf im PDF
-            pdf.set_fill_color(200, 220, 255)
-            pdf.cell(150, 8, "Position / Hierarchie", border=1, fill=True)
-            pdf.cell(40, 8, "Betrag EUR", border=1, ln=True, fill=True, align='R')
-
-            # Daten zeilenweise schreiben
-            for _, row in export_df.iterrows():
-                # Wir bauen einen Text-String aus den ersten 3 Ebenen
-                pos_text = f"{row.iloc[0]} > {row.iloc[1]} > {row.iloc[2]}"
-                wert = f"{row.iloc[-1]:,.2f}"
-                
-                # PDF Zeile schreiben (latin-1 um Sonderzeichen-Fehler zu vermeiden)
-                pdf.cell(150, 7, pos_text[:80].encode('latin-1', 'replace').decode('latin-1'), border=1)
-                pdf.cell(40, 7, wert, border=1, ln=True, align='R')
-
-            pdf_output = pdf.output()
-            st.download_button(
-                label="📄 Als PDF-Protokoll herunterladen",
-                data=bytes(pdf_output),
-                file_name="LUMINA_Protokoll.pdf",
-                mime="application/pdf"
-            )
-            
+            st.success(f"Bericht erstellt. Es wurden {len(wert_cols)} Wertspalten (inkl. Vorjahr) erkannt.")
             st.balloons()
-            st.success("Alle Exportformate stehen bereit.")
     else:
         st.warning("Bitte laden Sie in Phase 3 die Dateien hoch.")
+
 
 
 
