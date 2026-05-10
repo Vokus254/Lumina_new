@@ -16,68 +16,64 @@ phase = st.sidebar.radio(
 
 if phase == "1: Willkommen":
     st.header("Willkommen bei LUMINA")
-    st.subheader("Ihr digitaler Abschluss-Assistent für prüfungssichere Abschlüsse.")
-    st.info("Nutzen Sie das hierarchische Mapping für Ihre unternehmensspezifischen HGB-Abschlüsse.")
+    st.subheader("Ihr digitaler Abschluss-Assistent")
+    st.info("Das hierarchische Mapping für individuelle Konzernstrukturen ist aktiv.")
 
 elif phase == "2: Unternehmen verstehen":
     st.header("Phase 2: Unternehmen verstehen")
     st.text_input("Mandanten-Name", value="Beispiel GmbH")
-    st.selectbox("Abschluss-Standard", ["HGB (Konzern)", "HGB (Einzelabschluss)", "PersG"])
+    st.selectbox("Abschluss-Standard", ["HGB (Konzern)", "HGB (Einzelabschluss)"])
 
 elif phase == "3: Zahlen hochladen (SuSa)":
     st.header("Phase 3: Hierarchisches KI-Mapping")
     
-    # Import erst hier, um Fehler zu vermeiden
+    # Import sicherstellen
     try:
-        from mapping import get_hgb_structure
+        from mapping import get_dynamic_mapping
     except ImportError:
-        st.error("Datei 'mapping.py' nicht gefunden oder fehlerhaft!")
+        st.error("Datei 'mapping.py' fehlerhaft oder nicht gefunden!")
         st.stop()
 
-    # ERST definieren wir das Objekt
     uploaded_file = st.file_uploader("SuSa-Excel hochladen", type=["xlsx"])
     
-    # DANN prüfen wir, ob es existiert
     if uploaded_file is not None:
-        # Header in Zeile 2 (Index 1)
+        # Einlesen ab Zeile 2
         df = pd.read_excel(uploaded_file, header=1)
         df = df.dropna(subset=['KontoNr'])
-      from mapping import get_dynamic_mapping
-for i in range(1, 8):
-    col_name = f'Ausweis_{i}'
-    df[col_name] = df['KontoNr'].apply(lambda x: get_dynamic_mapping(x).get(col_name, "Nicht zugeordnet"))
-
         
-        structure = get_hgb_structure()
+        # KontoNr sauber formatieren
+        df['KontoNr'] = df['KontoNr'].astype(float).astype(int).astype(str)
         
-        # Mapping der 7 Ebenen (Hierarchie nach deinem Muster)
+        # Mapping der 7 Ebenen über die neue dynamische Funktion
         for i in range(1, 8):
             col_name = f'Ausweis_{i}'
-            df[col_name] = df['KontoNr'].map(lambda x: structure.get(x, {}).get(col_name, "Nicht zugeordnet"))
+            df[col_name] = df['KontoNr'].apply(lambda x: get_dynamic_mapping(x).get(col_name, "Nicht zugeordnet"))
         
         st.session_state['susa_data'] = df
-        st.success("7-stufiges Mapping erfolgreich angewendet!")
+        st.success("Dynamisches Mapping angewendet (inkl. Bereichserkennung)!")
         
-        # Anzeige zur Kontrolle (Ebene 4, 5 und 7)
+        # Anzeige der Ergebnisse
         st.dataframe(df[['KontoNr', 'Kontobezeichnung', 'Ausweis_4', 'Ausweis_5', 'Ausweis_7']], hide_index=True)
 
 elif phase == "4: Prüfen & Optimieren":
     st.header("Phase 4: Smart Interview")
     if 'susa_data' in st.session_state:
-        st.write("Wählen Sie eine Position zur Prüfung:")
         df = st.session_state['susa_data']
-        positionen = df['Ausweis_4'].unique()
-        wahl = st.selectbox("Ebene 4 (z.B. Sachanlagen)", positionen)
-        st.info(f"Sie prüfen gerade den Bereich: {wahl}")
+        st.subheader("Offene To-Dos")
+        nicht_zugeordnet = df[df['Ausweis_4'] == "Nicht zugeordnet"]
+        if not nicht_zugeordnet.empty:
+            st.warning(f"Achtung: {len(nicht_zugeordnet)} Konten sind noch keiner HGB-Position zugeordnet.")
+            st.dataframe(nicht_zugeordnet[['KontoNr', 'Kontobezeichnung']])
     else:
         st.warning("Bitte laden Sie in Phase 3 eine SuSa hoch.")
 
 elif phase == "5: Abschluss prüfen":
     st.header("Phase 5: Die Generalprobe")
-    st.write("Vorschau der Bilanzstruktur (Ebene 1 bis 7)")
+    st.write("Live-Struktur Ihrer Bilanz...")
 
 elif phase == "6: Export & Versand":
-    st.header("Phase 6: Finaler Export")
-    st.button("Prüfer-ZIP generieren")
+    st.header("Phase 6: Export")
+    st.button("Banken-PDF erstellen")
+
 
 
