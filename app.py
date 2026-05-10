@@ -82,18 +82,16 @@ elif phase == "3: Zahlen hochladen (SuSa)":
                 df_map = get_clean_df(map_file)
                 st.info("Nutze hochgeladenes Mapping-File.")
                 
-                if st.button("Dieses Mapping dauerhaft in Cloud sichern"):
+                               if st.button("Dieses Mapping dauerhaft in Cloud sichern"):
                     with st.spinner("Synchronisiere mit Supabase..."):
                         for _, row in df_map.iterrows():
-                            # Spalten-Mapping für SQL vorbereiten
-                            m_data = {"konto_nr": str(row.iloc)} # Nimmt die erste Spalte
+                            m_data = {"konto_nr": str(row.iloc)}
                             for i in range(1, 8):
                                 m_data[f"ausweis_{i}"] = str(row.get(f"Ausweis_{i}", "Nicht zugeordnet"))
-                            try:
-                                supabase.table("master_mapping").upsert(m_data).execute()
-                            except Exception as e:
-                                st.error(f"Fehler bei Konto {row.iloc}: {e}")
-                        st.success("Erfolgreich in Cloud gespeichert!")
+                            supabase.table("master_mapping").upsert(m_data).execute()
+                    st.success("Erfolgreich in Cloud gespeichert!")
+                    st.rerun() # Sorgt dafür, dass die Tabelle sofort angezeigt wird
+ 
             else:
                 # Automatisches Laden aus Supabase
                 with st.spinner("Lade Master-Mapping aus der Cloud..."):
