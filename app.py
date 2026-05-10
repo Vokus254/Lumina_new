@@ -18,23 +18,24 @@ phase = st.sidebar.radio(
      "4: Prüfen & Optimieren", "5: Abschluss prüfen", "6: Export & Versand"]
 )
 
-# 3. HIER GEHT ES WEITER MIT DEINER LOGIK
-if phase == "1: Willkommen":
-    st.header("Willkommen bei LUMINA")
-    # ... Rest des Codes
-
-
-# --- IN PHASE 3: SPEICHERN BEIM UPLOAD ---
-if phase == "3: Zahlen hochladen (SuSa)":
-    # ... dein bisheriger Upload-Code ...
-    if mapping_file:
-        df_map = pd.read_excel(mapping_file)
-        # Mapping in Supabase schieben (Upsert = Update oder Insert)
+# Innerhalb von Phase 3, nachdem df_map erstellt wurde:
+if st.button("Master-Mapping in Datenbank sichern"):
+    with st.spinner("Speichere in Supabase..."):
         for _, row in df_map.iterrows():
-            data = {f"ausweis_{i}": row[f"Ausweis_{i}"] for i in range(1, 8)}
-            data["konto_nr"] = str(row["KontoNr"])
-            supabase.table("master_mapping").upsert(data).execute()
-        st.success("Master-Mapping dauerhaft in der Cloud gespeichert!")
+            # Wir bereiten die Zeile für Supabase vor
+            mapping_data = {
+                "konto_nr": str(row[k_map]),
+                "ausweis_1": str(row.get("Ausweis_1", "")),
+                "ausweis_2": str(row.get("Ausweis_2", "")),
+                "ausweis_3": str(row.get("Ausweis_3", "")),
+                "ausweis_4": str(row.get("Ausweis_4", "")),
+                "ausweis_5": str(row.get("Ausweis_5", "")),
+                "ausweis_6": str(row.get("Ausweis_6", "")),
+                "ausweis_7": str(row.get("Ausweis_7", ""))
+            }
+            # Der 'upsert' Befehl überschreibt existierende Konten oder legt neue an
+            supabase.table("master_mapping").upsert(mapping_data).execute()
+        st.success("Mapping dauerhaft gespeichert!")
 
 
 elif phase == "4: Prüfen & Optimieren":
