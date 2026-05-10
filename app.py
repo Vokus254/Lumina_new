@@ -88,8 +88,34 @@ elif phase == "4: Prüfen & Optimieren":
 
 
 elif phase == "5: Abschluss prüfen":
-    st.header("Phase 5: Die Generalprobe")
-    st.write("Live-Struktur Ihrer Bilanz...")
+    st.header("Phase 5: Die Generalprobe (Bilanz-Vorschau)")
+    
+    if 'susa_data' in st.session_state:
+        df = st.session_state['susa_data']
+        
+        # Wir filtern die Konten, die zugeordnet sind
+        gemappt = df[df['Ausweis_4'] != "Nicht zugeordnet"]
+        
+        st.subheader("Aggregierte Bilanzstruktur (HGB)")
+        
+        # Gruppierung nach Ausweis-Ebene 4 und 5
+        # Wir nehmen an, der Saldo steht in der 3. Spalte (Index 2)
+        saldo_col = df.columns[2] 
+        
+        bilanz_view = gemappt.groupby(['Ausweis_4', 'Ausweis_5'])[saldo_col].sum().reset_index()
+        bilanz_view.columns = ['HGB-Bereich', 'Einzelposition', 'Betrag (€)']
+        
+        # Anzeige als Tabelle
+        st.table(bilanz_view.style.format({'Betrag (€)': '{:,.2f}'}))
+        
+        # Berechnung der Bilanzsumme (der zugeordneten Konten)
+        bilanzsumme = bilanz_view['Betrag (€)'].sum()
+        st.metric("Vorläufige Bilanzsumme (Aktiva)", f"{bilanzsumme:,.2f} €")
+        
+        st.success("Alle Korrekturen aus Phase 4 wurden berücksichtigt.")
+    else:
+        st.warning("Bitte laden Sie in Phase 3 eine SuSa hoch.")
+
 
 elif phase == "6: Export & Versand":
     st.header("Phase 6: Export")
