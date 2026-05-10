@@ -200,24 +200,62 @@ elif phase == "5: Abschluss prüfen":
 
 elif phase == "6: Export & Versand":
     st.header("Phase 6: Finaler Export")
+    
     if 'susa_data' in st.session_state:
-        df = st.session_state['susa_data']
-        ausweis_cols = [c for c in df.columns if 'Ausweis' in c]
+        df = st.session_state['susa_data'].copy()
+        # Spaltennamen säubern und in Text umwandeln
+        df.columns = [str(c).strip() for c in df.columns]
+        
+        # --- FLEXIBLE SUCHE (wie in Phase 5) ---
+        ausweis_cols = sorted([c for c in df.columns if 'ausweis' in c.lower()])
         wert_cols = [c for c in df.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
         
-        export_df = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
-        
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            export_df.to_excel(writer, index=False, sheet_name='LUMINA_Abschluss')
-        
-        st.download_button(
-            label="📥 Excel-Bericht herunterladen",
-            data=buffer.getvalue(),
-            file_name="LUMINA_Abschluss.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-        st.balloons()
+        if ausweis_cols and wert_cols:
+            # Aggregation für den Bericht (Ebene 1-5)
+            export_df = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
+            
+            # --- EXCEL EXPORT ---
+            import io
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                export_df.to_excel(writer, index=False, sheet_name='LUMINA_Abschluss')
+            
+            st.success("Der strukturierte HGB-Bericht ist bereit.")
+            
+            st.download_button(
+                label="📥 Bilanz-Bericht (.xlsx) herunterladen",
+                data=buffer.getvalue(),
+                file_name="LUMINA_Bericht_2025.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+            # --- PDF PROTOKOLL ---
+            from fpdf import FPDF
+            if st.button("📄 PDF-Vorschau generieren"):
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", "B", 14)
+                pdf.cell(0, 10, "LUMINA Abschluss-Protokoll 2025", ln=True, align='C')
+                pdf.set_font("Arial", size=8)
+                pdf.ln(5)
+                
+                # Die ersten 50 Zeilen ins PDF schreiben
+                for _, row in export_df.head(50).iterrows():
+                    # Wir bauen den Text sicher zusammen
+                    txt = f"{row.iloc} > {row.iloc} | {row[wert_cols[-1]]:,.2f} EUR"
+                    pdf.cell(0, 7, txt.encode('latin-1', 'replace').decode('latin-1'), border=1, ln=True)
+                
+                st.download_button(
+                    label="Klicken zum PDF-Download",
+                    data=bytes(pdf.output()),
+                    file_name="LUMINA_Protokoll.pdf",
+                    mime="application/pdf"
+                )
+            st.balloons()
+        else:
+            st.error("Konnte keine auswertbaren Struktur- oder Wertspalten finden.")
+    else:
+        st.warning("Bitte laden Sie in Phase 3 erst die Daten hoch.")
 
 
 
