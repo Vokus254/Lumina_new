@@ -125,35 +125,39 @@ elif phase == "5: Abschluss prüfen":
     st.header("Phase 5: Die Generalprobe (Struktur-Bilanz)")
     
     if 'susa_data' in st.session_state:
-        df = st.session_state['susa_data']
+        df = st.session_state['susa_data'].copy()
         
         # 1. Saldo-Spalte automatisch finden
         saldo_col = next((c for c in df.columns if any(x in str(c) for x in ['2025', 'Saldo', '31.12'])), None)
         
         if saldo_col:
+            # WICHTIG: Alle Spaltennamen in Text umwandeln (behebt den TypeError)
+            df.columns = [str(c) for c in df.columns]
+            saldo_col_str = str(saldo_col)
+            
             st.subheader("Aggregierte HGB-Struktur")
             
-            # 2. Gruppierung über die Ebenen (z.B. Ausweis 3, 4 und 5)
-            # Wir nehmen nur die Konten, die zugeordnet sind
-            ausweis_cols = [c for c in df.columns if 'Ausweis' in str(c)]
-            levels = ausweis_cols[:3] # Wir starten mit den ersten 3 Ebenen zur Übersicht
+            # 2. Gruppierung über die Ebenen (Ausweis 1 bis 3)
+            ausweis_cols = [c for c in df.columns if 'Ausweis' in c]
+            levels = ausweis_cols[:3] 
             
-            gemappt = df[df[ausweis_cols[0]].fillna("Nicht zugeordnet") != "Nicht zugeordnet"]
+            # Nur Konten nehmen, die gemappt sind
+            gemappt = df[df[ausweis_cols[0]] != "Nicht zugeordnet"].copy()
             
             if not gemappt.empty:
                 # Hierarchische Summe bilden
-                pivot = gemappt.groupby(levels)[saldo_col].sum().reset_index()
+                pivot = gemappt.groupby(levels)[saldo_col_str].sum().reset_index()
                 
-                # Schöne Tabelle anzeigen
+                # Schöne Tabelle anzeigen (jetzt sicher vor Fehlern)
                 st.dataframe(
                     pivot,
-                    column_config={saldo_col: st.column_config.NumberColumn("Saldo (€)", format="%.2f €")},
+                    column_config={saldo_col_str: st.column_config.NumberColumn("Saldo (€)", format="%.2f €")},
                     hide_index=True,
                     use_container_width=True
                 )
                 
                 # 3. Gesamtsumme (Aktiva-Check)
-                gesamt = gemappt[saldo_col].sum()
+                gesamt = gemappt[saldo_col_str].sum()
                 st.metric("Vorläufige Bilanzsumme (gemappt)", f"{gesamt:,.2f} €")
             else:
                 st.warning("Noch keine Konten erfolgreich gemappt.")
