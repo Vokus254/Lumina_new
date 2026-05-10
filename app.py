@@ -313,6 +313,35 @@ def merge_mapping_updates(current_mapping: pd.DataFrame | None, updates: pd.Data
     return normalize_mapping(pd.concat([base, updates], ignore_index=True))
 
 
+def ausweis_options(mapping: pd.DataFrame | None, level: int, extra_values: pd.Series | None = None) -> list[str]:
+    col = f"Ausweis_{level}"
+    options = {""}
+    if mapping is not None and col in mapping.columns:
+        for value in mapping[col].dropna().astype(str).str.strip():
+            if value and value != KLARUNG:
+                options.add(value)
+    if extra_values is not None:
+        for value in extra_values.dropna().astype(str).str.strip():
+            if value and value != KLARUNG:
+                options.add(value)
+    return [""] + sorted(options - {""})
+
+
+def ausweis_column_config(mapping: pd.DataFrame | None, editor_df: pd.DataFrame | None = None) -> dict:
+    return {
+        f"Ausweis_{i}": st.column_config.SelectboxColumn(
+            f"Ausweis_{i}",
+            options=ausweis_options(
+                mapping,
+                i,
+                editor_df[f"Ausweis_{i}"] if editor_df is not None and f"Ausweis_{i}" in editor_df.columns else None,
+            ),
+            required=(i == 1),
+        )
+        for i in range(1, 8)
+    }
+
+
 def normalize_mapping(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     out.columns = [str(c).strip() for c in out.columns]
@@ -747,6 +776,7 @@ elif phase == "4 Prüfen":
                 hide_index=True,
                 num_rows="fixed",
                 disabled=["KontoNr", "Kontobezeichnung"] + [c for c in value_cols if c in editor_df.columns],
+                column_config=ausweis_column_config(st.session_state.mapping, editor_df),
             )
 
             save_col, download_col = st.columns(2)
