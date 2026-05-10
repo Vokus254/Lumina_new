@@ -176,12 +176,14 @@ elif phase == "6: Export & Versand":
         saldo_col = next((c for c in df.columns if any(x in str(c) for x in ['2025', 'Saldo', '31.12'])), None)
         
         ausweis_cols = [c for c in df.columns if 'Ausweis' in c]
-        gemappt = df[df[ausweis_cols] != "Nicht zugeordnet"].copy()
+        gemappt = df[df[ausweis_cols].fillna("Nicht zugeordnet") != "Nicht zugeordnet"].copy()
 
         if not gemappt.empty:
-            export_df = gemappt.groupby(ausweis_cols[:5])[saldo_col].sum().reset_index()
+            # Wir nehmen für den Export die ersten 4 Ebenen + Saldo
+            export_cols = ausweis_cols[:4] + [saldo_col]
+            export_df = gemappt.groupby(ausweis_cols[:4])[saldo_col].sum().reset_index()
             
-            # --- EXCEL EXPORT ---
+            # --- EXCEL EXPORT (Bleibt gleich, da stabil) ---
             import io
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -194,27 +196,33 @@ elif phase == "6: Export & Versand":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-            # --- PDF EXPORT ---
+            # --- PDF EXPORT (KORRIGIERT) ---
             from fpdf import FPDF
             
             class PDF(FPDF):
                 def header(self):
-                    self.set_font('Arial', 'B', 16)
-                    self.cell(0, 10, 'LUMINA Abschlussbericht 2025', ln=True, align='C')
-                    self.ln(10)
+                    self.set_font('helvetica', 'B', 14)
+                    self.cell(0, 10, 'LUMINA Abschlussbericht - HGB Struktur', ln=True, align='C')
+                    self.ln(5)
 
             pdf = PDF()
             pdf.add_page()
-            pdf.set_font("Arial", size=10)
+            pdf.set_font("helvetica", size=9)
             
-            pdf.cell(0, 10, f"Mandant: Beispiel GmbH", ln=True)
-            pdf.cell(0, 10, f"Erstellungsdatum: 10.05.2026", ln=True)
-            pdf.ln(5)
-            
-            # Tabelle in PDF schreiben
-            for index, row in export_df.iterrows():
-                line = f"{row[0]} | {row[1]} | {row[2]} | {row[-1]:,.2f} €"
-                pdf.cell(0, 8, line.encode('latin-1', 'replace').decode('latin-1'), ln=True)
+            # Tabellenkopf im PDF
+            pdf.set_fill_color(200, 220, 255)
+            pdf.cell(150, 8, "Position / Hierarchie", border=1, fill=True)
+            pdf.cell(40, 8, "Betrag EUR", border=1, ln=True, fill=True, align='R')
+
+            # Daten zeilenweise schreiben
+            for _, row in export_df.iterrows():
+                # Wir bauen einen Text-String aus den ersten 3 Ebenen
+                pos_text = f"{row.iloc[0]} > {row.iloc[1]} > {row.iloc[2]}"
+                wert = f"{row.iloc[-1]:,.2f}"
+                
+                # PDF Zeile schreiben (latin-1 um Sonderzeichen-Fehler zu vermeiden)
+                pdf.cell(150, 7, pos_text[:80].encode('latin-1', 'replace').decode('latin-1'), border=1)
+                pdf.cell(40, 7, wert, border=1, ln=True, align='R')
 
             pdf_output = pdf.output()
             st.download_button(
@@ -225,8 +233,10 @@ elif phase == "6: Export & Versand":
             )
             
             st.balloons()
+            st.success("Alle Exportformate stehen bereit.")
     else:
         st.warning("Bitte laden Sie in Phase 3 die Dateien hoch.")
+
 
 
 
