@@ -160,62 +160,43 @@ elif phase == "4: Prüfen & Optimieren":
 
 
 elif phase == "5: Abschluss prüfen":
-    st.header("Phase 5: Interaktive Struktur-Bilanz")
+    st.header("Phase 5: Struktur-Bilanz (Cloud-basiert)")
     
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data'].copy()
-        # Spaltennamen säubern
         df.columns = [str(c).strip() for c in df.columns]
         
-        # --- DYNAMISCHE SPALTEN-SUCHE ---
-        # Wir suchen die Spalten, die 'Ausweis_1', 'Ausweis_2' usw. ENTHALTEN
-        def find_dynamic_col(name):
-            return next((c for c in df.columns if name.lower() in c.lower()), None)
-        
-        a1_col = find_dynamic_col('Ausweis_1')
-        a2_col = find_dynamic_col('Ausweis_2')
-        ausweis_cols = [c for c in df.columns if 'ausweis' in c.lower()]
+        # --- FLEXIBLE SPALTENSUCHE ---
+        # Wir suchen alle Ausweis-Spalten, egal ob groß oder klein
+        ausweis_cols = sorted([c for c in df.columns if 'ausweis' in c.lower()])
+        # Wir suchen die Wert-Spalten (2025, 2024)
         wert_cols = [c for c in df.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
         
-        if a1_col and wert_cols:
-            saldo_akt = wert_cols[-1]
+        if ausweis_cols and wert_cols:
+            st.subheader("Aggregierte HGB-Ansicht")
             
-            # --- 1. Kennzahlen-Leiste ---
-            # Bilanzsumme: Wir filtern dort, wo Ebene 2 'Aktiva' enthält
-            mask_aktiva = df[a2_col].str.contains('Aktiva', na=False) if a2_col else pd.Series(False, index=df.index)
-            bilanzsumme = df[mask_aktiva][saldo_akt].sum()
+            # Gruppierung über die ersten 5 Ebenen
+            # Wir füllen leere Felder mit dem Klärungsposten-Text
+            for col in ausweis_cols:
+                df[col] = df[col].fillna("9. KLÄRUNGSPOSTEN")
             
-            # GuV: Wir filtern dort, wo Ebene 1 'GuV' enthält
-            mask_guv = df[a1_col].str.contains('GuV', na=False)
-            guv_ergebnis = df[mask_guv][saldo_akt].sum() * -1
+            pivot = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
             
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Bilanzsumme", f"{bilanzsumme:,.2f} €")
-            col2.metric("Jahresergebnis (GuV)", f"{guv_ergebnis:,.2f} €")
-            col3.metric("Differenz (Soll/Haben)", f"{df[saldo_akt].sum():,.2f} €")
-
-            st.divider()
-
-            # --- 2. Interaktiver Drill-Down ---
-            st.subheader("Bilanz-Gliederung")
+            # Anzeige der Bilanzsumme
+            akt_jahr = wert_cols[-1]
+            st.metric(f"Vorläufige Bilanzsumme {akt_jahr}", f"{pivot[akt_jahr].sum():,.2f} €")
             
-            for ebene1 in df[a1_col].unique():
-                if pd.isna(ebene1): continue
-                with st.expander(f"📂 {ebene1}"):
-                    sub_df = df[df[a1_col] == ebene1]
-                    # Wir gruppieren nach den verfügbaren Ausweis-Spalten (max. 5)
-                    pivot = sub_df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
-                    
-                    st.dataframe(
-                        pivot, 
-                        column_config={c: st.column_config.NumberColumn(format="%.2f €") for c in wert_cols},
-                        use_container_width=True,
-                        hide_index=True
-                    )
+            st.dataframe(
+                pivot, 
+                column_config={c: st.column_config.NumberColumn(format="%.2f €") for c in wert_cols},
+                use_container_width=True,
+                hide_index=True
+            )
         else:
-            st.error("Struktur-Spalten (Ausweis) konnten nicht eindeutig identifiziert werden.")
+            st.error("Strukturdaten (Ausweis) oder Salden konnten nicht identifiziert werden.")
     else:
-        st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
+        st.warning("Bitte laden Sie in Phase 3 die Daten aus der Cloud oder per Excel.")
+
 
 elif phase == "6: Export & Versand":
     st.header("Phase 6: Finaler Export")
