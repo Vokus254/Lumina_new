@@ -48,6 +48,8 @@ Der Key gehört nicht in `app.py` und nicht ins Repository. Die App nutzt die Op
 
 In der App können neuere GPT-5-Modelle sowie ältere 4er-Modelle ausgewählt werden, unter anderem `gpt-4.1`, `gpt-4.1-mini`, `gpt-4o`, `gpt-4o-mini` und `gpt-4`. Während der Erstellung zeigt die App eine Schrittanzeige von der Zahlenbasis bis zur fertigen Antwort.
 
+Der OpenAI-Entwurf kann als Word-Datei (`.docx`) heruntergeladen werden.
+
 ## Erwartete Spalten
 
 Die App erkennt typische Kontospalten wie `Konto`, `Kontonummer`, `KontoNr` oder `Account`. Wertspalten werden über Begriffe wie `Saldo`, `Betrag`, `Wert`, `Summe`, `Soll`, `Haben`, `Debit`, `Credit` oder Jahreszahlen erkannt.

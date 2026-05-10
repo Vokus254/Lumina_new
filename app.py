@@ -18,6 +18,11 @@ except Exception:
     OpenAI = None
 
 try:
+    from docx import Document
+except Exception:
+    Document = None
+
+try:
     from mapping import get_dynamic_mapping
 except Exception:
     get_dynamic_mapping = None
@@ -537,6 +542,31 @@ def clean_ai_output(text: str) -> str:
     cleaned = re.sub(r"^\s*[-*]\s+", "- ", cleaned, flags=re.MULTILINE)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
+
+
+def ai_output_to_docx(text: str, title: str) -> bytes | None:
+    if Document is None:
+        return None
+
+    document = Document()
+    document.add_heading(title, level=1)
+
+    for block in clean_ai_output(text).splitlines():
+        line = block.strip()
+        if not line:
+            continue
+        if line.startswith("- "):
+            document.add_paragraph(line[2:].strip(), style="List Bullet")
+        elif re.match(r"^\d+\.\s+", line):
+            document.add_paragraph(re.sub(r"^\d+\.\s+", "", line), style="List Number")
+        elif len(line) < 90 and not line.endswith("."):
+            document.add_heading(line, level=2)
+        else:
+            document.add_paragraph(line)
+
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
 
 
 def variance_display(df: pd.DataFrame):
@@ -1534,13 +1564,20 @@ elif phase == "6 Interpretation":
                     st.markdown(st.session_state.ai_interpretation)
                     with st.expander("Textversion anzeigen"):
                         st.text_area("OpenAI-Entwurf als Text", st.session_state.ai_interpretation, height=420)
-                    st.download_button(
-                        "OpenAI-Entwurf herunterladen",
-                        data=st.session_state.ai_interpretation.encode("utf-8"),
-                        file_name=f"Lumina_OpenAI_Interpretation_{st.session_state.abschlussjahr}.md",
-                        mime="text/markdown",
-                        use_container_width=True,
+                    docx = ai_output_to_docx(
+                        st.session_state.ai_interpretation,
+                        f"LUMINA Interpretation {st.session_state.mandant} {st.session_state.abschlussjahr}",
                     )
+                    if docx:
+                        st.download_button(
+                            "OpenAI-Entwurf als Word herunterladen",
+                            data=docx,
+                            file_name=f"Lumina_OpenAI_Interpretation_{st.session_state.abschlussjahr}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            use_container_width=True,
+                        )
+                    else:
+                        st.warning("Word-Export ist erst verfügbar, wenn python-docx installiert ist.")
 
 
 # ------------------------------------------------------------
