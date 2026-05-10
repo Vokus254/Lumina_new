@@ -71,8 +71,14 @@ elif phase == "3: Zahlen hochladen (SuSa)":
             st.success(f"Mapping erfolgreich! Verknüpft über '{susa_k_col}' (SuSa) und '{map_k_col}' (Master).")
             
             # Anzeige (wir nehmen die ersten verfügbaren Ausweis-Spalten zur Vorschau)
-            preview_cols = [susa_k_col, 'Kontobezeichnung'] + [c for c in df_final.columns if 'Ausweis' in c][:3]
-            st.dataframe(df_final[preview_cols].head(20), hide_index=True)
+                       # Anzeige der Ergebnisse (wir nehmen die ersten 3 gefundenen Ausweis-Spalten)
+            ausweis_cols = [c for c in df_final.columns if 'Ausweis' in str(c)]
+            preview_cols = [susa_k_col, 'Kontobezeichnung'] + ausweis_cols[:3]
+            
+            # Nur Spalten anzeigen, die auch wirklich im Ergebnis-DF existieren
+            final_preview = [c for c in preview_cols if c in df_final.columns]
+            st.dataframe(df_final[final_preview].head(20), hide_index=True)
+
         else:
             st.error("In einer der Dateien konnte keine Spalte mit 'Konto' gefunden werden.")
 
