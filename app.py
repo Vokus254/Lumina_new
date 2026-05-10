@@ -113,21 +113,53 @@ elif phase == "4: Prüfen & Optimieren":
 
 elif phase == "5: Abschluss prüfen":
     st.header("Phase 5: Struktur-Bilanz")
+    
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data'].copy()
-        df.columns = [str(c) for c in df.columns]
-        ausweis_cols = [c for c in df.columns if 'Ausweis' in c]
-        wert_cols = [c for c in df.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
         
-        if ausweis_cols and wert_cols:
-            # Vorzeichen-Logik: Passiva und GuV drehen für die Darstellung
-            for c in wert_cols:
-                df[c] = df.apply(lambda r: r[c] * -1 if any(x in str(r['Ausweis_2']) for x in ['Passiva', 'GuV']) else r[c], axis=1)
+        # 1. Spaltennamen säubern (entfernt Leerzeichen am Anfang/Ende)
+        df.columns = [str(c).strip() for c in df.columns]
+        
+        # 2. Dynamische Suche nach den benötigten Spalten
+        ausweis_cols = [c for c in df.columns if 'ausweis' in c.lower()]
+        # Wir suchen gezielt nach der Spalte für Ebene 2 (für die Vorzeichen-Logik)
+        a2_col = next((c for c in ausweis_cols if '2' in c), None)
+        
+        wert_cols = [c for c in df.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
+
+        if wert_cols:
+            # 3. Vorzeichen-Logik nur ausführen, wenn Ebene 2 gefunden wurde
+            if a2_col:
+                for c in wert_cols:
+                    # Sicherstellen, dass wir mit Zahlen rechnen
+                    df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
+                    # Vorzeichen drehen für Passiva und GuV
+                    df[c] = df.apply(lambda r: r[c] * -1 if any(x in str(r[a2_col]) for x in ['Passiva', 'GuV']) else r[c], axis=1)
             
-            pivot = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
-            st.dataframe(pivot)
+            st.subheader("Aggregierte HGB-Ansicht")
+            
+            # 4. Gruppierung und Anzeige
+            if ausweis_cols:
+                # Wir gruppieren nach den ersten 3 gefundenen Ausweis-Ebenen
+                pivot = df.groupby(ausweis_cols[:3])[wert_cols].sum().reset_index()
+                st.dataframe(
+                    pivot, 
+                    column_config={c: st.column_config.NumberColumn(format="%.2f €") for c in wert_cols},
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                # Kontroll-Summe
+                gesamt = pivot[wert_cols].sum()
+                st.write("### Kontrollwerte:")
+                st.write(gesamt)
+            else:
+                st.warning("Keine Ausweis-Struktur gefunden. Bitte Master-Mapping in Phase 3 prüfen.")
+        else:
+            st.error("Keine Wert-Spalten (2024/2025) im Datensatz gefunden.")
     else:
-        st.warning("Bitte erst Daten in Phase 3 laden.")
+        st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
+
 
 elif phase == "6: Export & Versand":
     st.header("Phase 6: Export")
