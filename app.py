@@ -49,6 +49,36 @@ OPENAI_MODELS = {
     "GPT-4o mini": "gpt-4o-mini",
     "GPT-4 (älter)": "gpt-4",
 }
+AI_ROLES = [
+    "Wirtschaftsprüfer",
+    "HGB-Bilanzierer",
+    "Management-Reporter",
+    "CFO",
+    "Leiter Rechnungswesen",
+]
+AI_PURPOSES = [
+    "HGB-Anhang",
+    "Lagebericht",
+    "Management Summary",
+    "Prüfer-Rückfragen",
+    "Bank-Reporting",
+    "Internes Rechnungswesen",
+]
+AI_AUDIENCES = [
+    "Geschäftsführung",
+    "Wirtschaftsprüfer",
+    "Bank",
+    "Internes Rechnungswesen",
+    "Beirat / Aufsichtsorgan",
+]
+AI_TONES = [
+    "prüferfreundlich, vorsichtig, sachlich, konservativ",
+    "managementorientiert, klar, entscheidungsnah",
+    "bankorientiert, risikobewusst, faktenbasiert",
+    "intern, knapp, handlungsorientiert",
+]
+AI_LENGTHS = ["kurz", "mittel", "lang"]
+AI_FORMS = ["gegliederte Abschnitte", "Bulletpoints", "Fließtext", "Tabelle"]
 
 
 # ------------------------------------------------------------
@@ -518,6 +548,7 @@ def interpretation_markdown(
     abschlussjahr: int,
     threshold: float,
     top_n: int,
+    ai_config: dict | None = None,
 ) -> str:
     current_col, prior_col = analysis_columns(value_cols)
     if current_col is None:
@@ -529,8 +560,20 @@ def interpretation_markdown(
     account_cols = [c for c in account_cols if c in work.columns]
     top_accounts = work[work["Veränderung_abs"] >= threshold].sort_values("Veränderung_abs", ascending=False).head(top_n)
 
+    ai_config = ai_config or {}
+    rules = ai_config.get("rules", [])
+    output_structure = ai_config.get("output_structure", [])
+
     lines = [
         f"# KI-Arbeitsgrundlage für {mandant} {abschlussjahr}",
+        "",
+        "## Steuerung der KI-Ausgabe",
+        f"- Rolle: {ai_config.get('role', 'erfahrener HGB-Abschlussanalyst')}",
+        f"- Zweck: {ai_config.get('purpose', 'Management-Reporting, Anhang-Hinweise und Lagebericht-Hinweise')}",
+        f"- Adressat: {ai_config.get('audience', 'Geschäftsführung und Wirtschaftsprüfer')}",
+        f"- Ton / Stil: {ai_config.get('tone', 'prüferfreundlich, vorsichtig, sachlich, konservativ')}",
+        f"- Textumfang: {ai_config.get('length', 'mittel')}",
+        f"- Form: {ai_config.get('form', 'gegliederte Abschnitte')}",
         "",
         "## Kontext",
         f"- Abschlussjahr: {abschlussjahr}",
@@ -570,11 +613,14 @@ def interpretation_markdown(
             "",
             "## Auftrag an die KI",
             "Bitte interpretiere die Entwicklung fachlich vorsichtig und prüferfreundlich.",
-            "Erstelle getrennte Abschnitte für:",
-            "1. Management-Reporting mit Kernaussagen und Treibern.",
-            "2. Anhang-Hinweise mit möglichen erläuterungsbedürftigen Positionen.",
-            "3. Lagebericht-Hinweise zu Vermögens-, Finanz- und Ertragslage.",
-            "4. Rückfragen an das Rechnungswesen, falls Zahlen ohne weitere Informationen nicht belastbar interpretierbar sind.",
+            f"Erstelle einen Text für: {ai_config.get('purpose', 'Management-Reporting, Anhang und Lagebericht')}.",
+            f"Adressat: {ai_config.get('audience', 'Geschäftsführung und Wirtschaftsprüfer')}.",
+            "",
+            "## Wichtige Regeln",
+            *(f"- {rule}" for rule in rules),
+            "",
+            "## Ausgabe-Struktur",
+            *(f"{idx}. {item}" for idx, item in enumerate(output_structure, start=1)),
             "",
             "Wichtig: Keine Tatsachen erfinden. Formuliere Hypothesen als prüfbedürftig, wenn kein Sachverhalt geliefert wurde.",
         ]
@@ -603,33 +649,28 @@ def openai_status() -> str:
     return "verbunden"
 
 
-def generate_openai_interpretation(prompt_text: str, model: str) -> tuple[str | None, str | None]:
+def generate_openai_interpretation(prompt_text: str, model: str, temperature: float, ai_config: dict) -> tuple[str | None, str | None]:
     client = get_openai_client()
     if client is None:
         return None, openai_status()
 
-    instructions = """
-Du bist ein vorsichtiger deutscher HGB-Abschlussanalyst.
+    instructions = f"""
+Du bist ein erfahrener {ai_config.get('role', 'HGB-Abschlussanalyst')}.
 Erzeuge eine fachlich belastbare, prüferfreundliche Interpretation der gelieferten Zahlenbasis.
 Trenne klar zwischen beobachtbaren Zahlenentwicklungen, möglichen Ursachen/Hypothesen und Rückfragen.
 Erfinde keine Sachverhalte. Nutze keine externen Informationen. Schreibe prägnant, aber verwertbar.
-Struktur:
-1. Executive Summary
-2. Vermögenslage
-3. Finanzlage
-4. Ertragslage
-5. Hinweise für den Anhang
-6. Hinweise für den Lagebericht
-7. Management-Reporting
-8. Rückfragen und benötigte Nachweise
+Zweck: {ai_config.get('purpose', 'Management-Reporting, Anhang-Hinweise und Lagebericht-Hinweise')}.
+Adressat: {ai_config.get('audience', 'Geschäftsführung und Wirtschaftsprüfer')}.
+Ton/Stil: {ai_config.get('tone', 'prüferfreundlich, vorsichtig, sachlich, konservativ')}.
+Textumfang: {ai_config.get('length', 'mittel')}.
+Form: {ai_config.get('form', 'gegliederte Abschnitte')}.
 """
 
     try:
-        response = client.responses.create(
-            model=model,
-            instructions=instructions,
-            input=prompt_text,
-        )
+        kwargs = {"model": model, "instructions": instructions, "input": prompt_text}
+        if model.startswith(("gpt-4", "gpt-4o")):
+            kwargs["temperature"] = temperature
+        response = client.responses.create(**kwargs)
         return response.output_text, None
     except Exception as e:
         return None, f"OpenAI-Anfrage fehlgeschlagen: {e}"
@@ -1321,6 +1362,16 @@ elif phase == "6 Interpretation":
 
             st.caption(f"Vergleich: {current_col} gegen {prior_col or 'kein Vorjahr'}")
 
+            default_rules = [
+                "Keine Tatsachen erfinden",
+                "Hypothesen nur als prüfbedürftig formulieren",
+                "HGB-konforme Sprache",
+                "Wesentliche Auffälligkeiten priorisieren",
+                "Keine Dopplungen",
+                "Bei Unsicherheit Rückfragen formulieren",
+            ]
+            default_structure = ["Kernaussagen", "Wesentliche Treiber", "Risiken / Prüfhinweise", "Rückfragen"]
+
             level_summary = grouped_variance(df, ["Ausweis_1", "Ausweis_2", "Ausweis_3"], current_col, prior_col).head(top_n)
             account_work = add_variance_columns(df, current_col, prior_col)
             top_accounts = account_work[account_work["Veränderung_abs"] >= threshold].sort_values("Veränderung_abs", ascending=False).head(top_n)
@@ -1344,6 +1395,16 @@ elif phase == "6 Interpretation":
                     st.dataframe(variance_display(top_accounts[display_cols + ["Veränderung_abs"]]), use_container_width=True, hide_index=True)
 
             with prompt_tab:
+                prompt_config = {
+                    "role": "Wirtschaftsprüfer",
+                    "purpose": "Management Summary",
+                    "audience": "Geschäftsführung",
+                    "tone": "prüferfreundlich, vorsichtig, sachlich, konservativ",
+                    "length": "mittel",
+                    "form": "gegliederte Abschnitte",
+                    "rules": default_rules,
+                    "output_structure": default_structure,
+                }
                 markdown = interpretation_markdown(
                     df,
                     value_cols,
@@ -1351,6 +1412,7 @@ elif phase == "6 Interpretation":
                     int(st.session_state.abschlussjahr),
                     threshold,
                     top_n,
+                    prompt_config,
                 )
                 st.text_area("Prompt für KI-Interpretation", markdown, height=420)
                 st.download_button(
@@ -1362,6 +1424,56 @@ elif phase == "6 Interpretation":
                 )
 
             with ai_tab:
+                st.markdown("### Steuerung")
+                model_label = st.selectbox(
+                    "OpenAI-Modell",
+                    list(OPENAI_MODELS.keys()),
+                    index=0,
+                )
+                model = OPENAI_MODELS[model_label]
+
+                c_role, c_purpose = st.columns(2)
+                with c_role:
+                    role = st.selectbox("Rolle", AI_ROLES, index=0)
+                with c_purpose:
+                    purpose = st.selectbox("Zweck", AI_PURPOSES, index=2)
+
+                c_audience, c_tone = st.columns(2)
+                with c_audience:
+                    audience = st.selectbox("Adressat", AI_AUDIENCES, index=0)
+                with c_tone:
+                    tone = st.selectbox("Ton / Stil", AI_TONES, index=0)
+
+                c_temp, c_length, c_form = st.columns(3)
+                with c_temp:
+                    temperature = st.slider(
+                        "Temperatur / Kreativität",
+                        min_value=0.0,
+                        max_value=1.0,
+                        value=0.1,
+                        step=0.1,
+                    )
+                with c_length:
+                    text_length = st.selectbox("Textumfang", AI_LENGTHS, index=1)
+                with c_form:
+                    text_form = st.selectbox("Form", AI_FORMS, index=0)
+                if not model.startswith(("gpt-4", "gpt-4o")):
+                    st.caption("Hinweis: Die Kreativität wird bei GPT-5-Modellen vor allem über Rolle, Ton und Regeln gesteuert.")
+
+                rules_text = st.text_area("Wichtige Regeln", "\n".join(default_rules), height=150)
+                structure_text = st.text_area("Ausgabe-Struktur", "\n".join(default_structure), height=120)
+
+                ai_config = {
+                    "role": role,
+                    "purpose": purpose,
+                    "audience": audience,
+                    "tone": tone,
+                    "length": text_length,
+                    "form": text_form,
+                    "rules": [line.strip("- ").strip() for line in rules_text.splitlines() if line.strip()],
+                    "output_structure": [line.strip("0123456789. -").strip() for line in structure_text.splitlines() if line.strip()],
+                }
+
                 markdown = interpretation_markdown(
                     df,
                     value_cols,
@@ -1369,6 +1481,7 @@ elif phase == "6 Interpretation":
                     int(st.session_state.abschlussjahr),
                     threshold,
                     top_n,
+                    ai_config,
                 )
                 status = openai_status()
                 if status == "verbunden":
@@ -1376,13 +1489,6 @@ elif phase == "6 Interpretation":
                 else:
                     st.warning(status)
                     st.caption("Lege den API-Key in Streamlit unter Secrets als OPENAI_API_KEY ab.")
-
-                model_label = st.selectbox(
-                    "OpenAI-Modell",
-                    list(OPENAI_MODELS.keys()),
-                    index=0,
-                )
-                model = OPENAI_MODELS[model_label]
 
                 if st.button("Interpretation mit OpenAI erzeugen", type="primary", use_container_width=True):
                     progress = st.progress(0)
@@ -1398,7 +1504,7 @@ elif phase == "6 Interpretation":
                     progress.progress(65)
 
                     with st.spinner("OpenAI erstellt den Interpretationsentwurf..."):
-                        result, err = generate_openai_interpretation(markdown, model)
+                        result, err = generate_openai_interpretation(markdown, model, temperature, ai_config)
                     if err:
                         progress.progress(100)
                         status_text.write("Die Anfrage wurde beendet, aber OpenAI hat einen Fehler zurückgegeben.")
