@@ -12,12 +12,22 @@ streamlit run app.py
 ## Nutzung
 
 1. Mandant und Abschlussjahr festlegen.
-2. Master-Mapping als Excel-Datei hochladen oder optional aus Supabase laden.
+2. Master-Mapping auswählen, als Excel-Datei hochladen oder optional aus Supabase laden.
 3. Mandanten-SuSa hochladen.
 4. Mapping starten und Klärungsposten prüfen.
 5. Abschlussansicht kontrollieren und Excel-Paket exportieren.
 
 Wenn kein Master-Mapping vorhanden ist, nutzt die App lokale Fallback-Regeln aus `mapping.py`. Diese Treffer werden als `Vorschlag` markiert und sollten fachlich geprüft werden, bevor sie dauerhaft ins Master-Mapping übernommen werden.
+
+## Mehrere Master-Mappings
+
+Für mehrere Master-Mappings in Supabase braucht die Tabelle `master_mapping` zusätzlich die Spalte `mapping_name` und einen eindeutigen Schlüssel auf `mapping_name` + `konto_nr`.
+
+Die Datei `supabase_master_mapping_migration.sql` enthält die dafür nötigen SQL-Befehle. Ohne diese Migration funktioniert weiterhin das bisherige Standard-Mapping.
+
+## Musterdateien
+
+Im Ordner `templates` liegen ein Muster-Kontenmapping und eine Muster-SuSa. Die App bietet beide Dateien im Bereich `Upload & Mapping` als Download an.
 
 ## Erwartete Spalten
 

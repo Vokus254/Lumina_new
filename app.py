@@ -1,6 +1,7 @@
 import io
 import re
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -29,6 +30,9 @@ st.set_page_config(
 
 KLARUNG = "9. KLÄRUNGSPOSTEN"
 APP_VERSION = "2026-05-10"
+APP_DIR = Path(__file__).resolve().parent
+TEMPLATE_DIR = APP_DIR / "templates"
+DEFAULT_MAPPING_NAME = "Standard"
 
 
 # ------------------------------------------------------------
@@ -476,6 +480,13 @@ def excel_export(susa_raw: pd.DataFrame, mapped: pd.DataFrame, pivot: pd.DataFra
     return buffer.getvalue()
 
 
+def template_bytes(filename: str) -> bytes | None:
+    path = TEMPLATE_DIR / filename
+    if not path.exists():
+        return None
+    return path.read_bytes()
+
+
 # ------------------------------------------------------------
 # Supabase optional
 # ------------------------------------------------------------
@@ -493,7 +504,23 @@ def get_supabase_client():
         return None
 
 
-def load_mapping_from_supabase():
+def list_mapping_names_from_supabase() -> tuple[list[str], str | None]:
+    sb = get_supabase_client()
+    if sb is None:
+        return [DEFAULT_MAPPING_NAME], "Supabase ist nicht verbunden."
+    try:
+        res = sb.table("master_mapping").select("mapping_name").execute()
+        names = sorted({
+            str(row.get("mapping_name") or DEFAULT_MAPPING_NAME).strip()
+            for row in (res.data or [])
+            if str(row.get("mapping_name") or DEFAULT_MAPPING_NAME).strip()
+        })
+        return names or [DEFAULT_MAPPING_NAME], None
+    except Exception:
+        return [DEFAULT_MAPPING_NAME], "Mehrere Master-Mappings benötigen in Supabase die Spalte 'mapping_name'. Bis dahin wird 'Standard' verwendet."
+
+
+def load_mapping_from_supabase(mapping_name: str = DEFAULT_MAPPING_NAME):
     sb = get_supabase_client()
     if sb is None:
         return None, "Supabase ist nicht verbunden. Prüfe Streamlit Secrets."
@@ -501,16 +528,28 @@ def load_mapping_from_supabase():
         rows = []
         page_size = 1000
         start = 0
+        supports_mapping_name = True
 
         while True:
             end = start + page_size - 1
-            res = (
-                sb.table("master_mapping")
-                .select("*")
-                .order("konto_nr")
-                .range(start, end)
-                .execute()
-            )
+            query = sb.table("master_mapping").select("*").order("konto_nr").range(start, end)
+            if mapping_name != DEFAULT_MAPPING_NAME:
+                query = query.eq("mapping_name", mapping_name)
+            elif supports_mapping_name:
+                query = query.or_(f"mapping_name.eq.{DEFAULT_MAPPING_NAME},mapping_name.is.null")
+            try:
+                res = query.execute()
+            except Exception:
+                if mapping_name != DEFAULT_MAPPING_NAME:
+                    return None, "Dieses Mapping konnte nicht geladen werden. Prüfe, ob die Supabase-Spalte 'mapping_name' existiert."
+                supports_mapping_name = False
+                res = (
+                    sb.table("master_mapping")
+                    .select("*")
+                    .order("konto_nr")
+                    .range(start, end)
+                    .execute()
+                )
             batch = res.data or []
             rows.extend(batch)
 
@@ -529,7 +568,7 @@ def load_mapping_from_supabase():
         return None, f"Supabase-Laden fehlgeschlagen: {e}"
 
 
-def save_mapping_to_supabase(mapping: pd.DataFrame):
+def save_mapping_to_supabase(mapping: pd.DataFrame, mapping_name: str = DEFAULT_MAPPING_NAME):
     sb = get_supabase_client()
     if sb is None:
         return "Supabase ist nicht verbunden."
@@ -537,11 +576,17 @@ def save_mapping_to_supabase(mapping: pd.DataFrame):
         df = normalize_mapping(mapping)
         rows = []
         for _, r in df.iterrows():
-            item = {"konto_nr": r["KontoNr"]}
+            item = {"mapping_name": mapping_name.strip() or DEFAULT_MAPPING_NAME, "konto_nr": r["KontoNr"]}
             for i in range(1, 8):
                 item[f"ausweis_{i}"] = r[f"Ausweis_{i}"]
             rows.append(item)
-        sb.table("master_mapping").upsert(rows, on_conflict="konto_nr").execute()
+        try:
+            sb.table("master_mapping").upsert(rows, on_conflict="mapping_name,konto_nr").execute()
+        except Exception as e:
+            if mapping_name.strip() and mapping_name.strip() != DEFAULT_MAPPING_NAME:
+                return f"Supabase-Speichern fehlgeschlagen: Für mehrere Master-Mappings muss 'mapping_name' mit eindeutigem Schlüssel vorhanden sein. Details: {e}"
+            legacy_rows = [{k: v for k, v in row.items() if k != "mapping_name"} for row in rows]
+            sb.table("master_mapping").upsert(legacy_rows, on_conflict="konto_nr").execute()
         return None
     except Exception as e:
         return f"Supabase-Speichern fehlgeschlagen: {e}"
@@ -554,6 +599,7 @@ for key, default in {
     "mandant": "Beispiel GmbH",
     "abschlussjahr": datetime.now().year - 1,
     "standard": "HGB Einzelabschluss",
+    "mapping_name": DEFAULT_MAPPING_NAME,
     "susa_raw": None,
     "susa_norm": None,
     "mapping": None,
@@ -587,6 +633,7 @@ sb_client = get_supabase_client()
 st.sidebar.markdown("---")
 st.sidebar.write("**Status**")
 st.sidebar.write("Supabase:", "✅ verbunden" if sb_client else "⚠️ nicht verbunden")
+st.sidebar.write("Master-Mapping:", st.session_state.mapping_name)
 st.sidebar.write("Mapping:", "✅ geladen" if st.session_state.mapping is not None else "⚠️ fehlt")
 st.sidebar.write("SuSa:", "✅ geladen" if st.session_state.susa_norm is not None else "⚠️ fehlt")
 
@@ -663,31 +710,45 @@ elif phase == "3 Upload & Mapping":
 
     with left:
         st.markdown("#### 1. Master-Mapping")
+        mapping_names, mapping_names_warning = list_mapping_names_from_supabase()
+        if st.session_state.mapping_name not in mapping_names:
+            mapping_names = [st.session_state.mapping_name] + mapping_names
+
+        selected_mapping_name = st.selectbox(
+            "Master-Mapping auswählen",
+            mapping_names,
+            index=mapping_names.index(st.session_state.mapping_name),
+        )
+        new_mapping_name = st.text_input("Name für neues/zu speicherndes Master-Mapping", selected_mapping_name)
+        st.session_state.mapping_name = (new_mapping_name or DEFAULT_MAPPING_NAME).strip()
+        if mapping_names_warning:
+            st.caption(mapping_names_warning)
+
         mapping_file = st.file_uploader("Mapping-Excel hochladen", type=["xlsx", "xls"], key="mapping_file")
 
         col_a, col_b = st.columns(2)
         with col_a:
             if st.button("☁️ Mapping aus Supabase laden", use_container_width=True):
-                df, err = load_mapping_from_supabase()
+                df, err = load_mapping_from_supabase(st.session_state.mapping_name)
                 if err:
                     st.warning(err)
                 else:
                     st.session_state.mapping = df
-                    st.success(f"{len(df)} Mapping-Zeilen geladen.")
+                    st.success(f"{len(df)} Mapping-Zeilen für '{st.session_state.mapping_name}' geladen.")
 
         with col_b:
             if st.button("💾 Mapping nach Supabase sichern", use_container_width=True):
                 if st.session_state.mapping is None:
                     st.warning("Noch kein Mapping geladen.")
                 else:
-                    err = save_mapping_to_supabase(st.session_state.mapping)
-                    st.success("Mapping gespeichert.") if not err else st.error(err)
+                    err = save_mapping_to_supabase(st.session_state.mapping, st.session_state.mapping_name)
+                    st.success(f"Mapping '{st.session_state.mapping_name}' gespeichert.") if not err else st.error(err)
 
         if mapping_file is not None:
             try:
                 raw_map = read_excel_smart(mapping_file)
                 st.session_state.mapping = normalize_mapping(raw_map)
-                st.success(f"Mapping geladen: {len(st.session_state.mapping)} Konten.")
+                st.success(f"Mapping geladen: {len(st.session_state.mapping)} Konten. Speichern legt es unter '{st.session_state.mapping_name}' ab.")
             except Exception as e:
                 st.error(str(e))
 
@@ -697,6 +758,46 @@ elif phase == "3 Upload & Mapping":
     with right:
         st.markdown("#### 2. Mandanten-SuSa")
         susa_file = st.file_uploader("SuSa-Excel hochladen", type=["xlsx", "xls"], key="susa_file")
+
+        st.markdown("#### Beispiele")
+        sample_mapping = template_bytes("Muster_Kontenmapping.xlsx")
+        sample_susa = template_bytes("Muster_Susa.xlsx")
+        sample_col_1, sample_col_2 = st.columns(2)
+        with sample_col_1:
+            if sample_mapping:
+                if st.button("Muster-Mapping laden", use_container_width=True):
+                    try:
+                        raw_map = read_excel_smart(io.BytesIO(sample_mapping))
+                        st.session_state.mapping = normalize_mapping(raw_map)
+                        st.success(f"Muster-Mapping geladen: {len(st.session_state.mapping)} Konten.")
+                    except Exception as e:
+                        st.error(str(e))
+                st.download_button(
+                    "Muster-Mapping herunterladen",
+                    data=sample_mapping,
+                    file_name="Muster_Kontenmapping.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+        with sample_col_2:
+            if sample_susa:
+                if st.button("Muster-SuSa laden", use_container_width=True):
+                    try:
+                        raw = read_excel_smart(io.BytesIO(sample_susa))
+                        norm, meta = normalize_susa(raw)
+                        st.session_state.susa_raw = raw
+                        st.session_state.susa_norm = norm
+                        st.session_state.meta = meta
+                        st.success(f"Muster-SuSa geladen: {len(norm)} Konten.")
+                    except Exception as e:
+                        st.error(str(e))
+                st.download_button(
+                    "Muster-SuSa herunterladen",
+                    data=sample_susa,
+                    file_name="Muster_Susa.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
 
         if susa_file is not None:
             try:
@@ -788,11 +889,11 @@ elif phase == "4 Prüfen":
                     else:
                         st.session_state.mapping = merge_mapping_updates(st.session_state.mapping, updates)
                         st.session_state.mapped = apply_mapping(st.session_state.susa_norm, st.session_state.mapping)
-                        err = save_mapping_to_supabase(st.session_state.mapping)
+                        err = save_mapping_to_supabase(st.session_state.mapping, st.session_state.mapping_name)
                         if err:
                             st.error(err)
                         else:
-                            message = f"{len(updates)} Zuordnung(en) ins Master-Mapping übernommen und nach Supabase gespeichert."
+                            message = f"{len(updates)} Zuordnung(en) ins Master-Mapping '{st.session_state.mapping_name}' übernommen und nach Supabase gespeichert."
                             if skipped:
                                 message += f" Nicht übernommen, weil Ausweis_1 fehlt: {', '.join(skipped)}"
                             st.session_state.flash_message = message
