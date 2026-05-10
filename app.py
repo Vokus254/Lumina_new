@@ -128,33 +128,36 @@ elif phase == "3: Zahlen hochladen (SuSa)":
 elif phase == "4: Prüfen & Optimieren":
     st.header("Phase 4: Lücken-Analyse & Qualitätssicherung")
     
-    # Wir prüfen, ob Daten aus Phase 3 (Upload oder Cloud) vorhanden sind
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data']
         
-        # Suche nach dem Klärungsposten
-        a1_col = next((c for c in df.columns if 'Ausweis_1' in str(c)), None)
+        # --- INTELLIGENTE SPALTENSUCHE ---
+        # Wir suchen die erste Spalte, die 'ausweis' und '1' im Namen hat (egal ob groß/klein)
+        a1_col = next((c for c in df.columns if 'ausweis' in str(c).lower() and '1' in str(c)), None)
         
         if a1_col:
-            luecken = df[df[a1_col] == "9. KLÄRUNGSPOSTEN (Mapping fehlt)"]
+            # Suche nach ungemappten Konten
+            luecken = df[df[a1_col].astype(str).str.contains('Mapping fehlt|nan|None', case=False)].copy()
             
             if not luecken.empty:
-                st.error(f"Achtung: {len(luecken)} Konten sind in der Cloud noch nicht gemappt!")
+                st.error(f"Gefunden: {len(luecken)} Konten ohne Zuordnung im Cloud-Mapping.")
                 
-                # Berechnung der betroffenen Summe
-                saldo_col = next((c for c in df.columns if '2025' in str(c)), df.columns[-1])
-                summe_luecke = luecken[saldo_col].sum()
+                # Beträge anzeigen
+                saldo_col = next((c for c in df.columns if '2025' in str(c) or 'saldo' in str(c).lower()), df.columns[-1])
+                st.metric("Summe ungeklärter Posten", f"{luecken[saldo_col].sum():,.2f} €")
                 
-                st.metric("Summe ungeklärter Posten", f"{summe_luecke:,.2f} €")
-                st.dataframe(luecken[['KontoNr', 'Kontobezeichnung_x', saldo_col]])
-                
-                st.info("💡 Diese Konten sollten Sie im Master-Mapping ergänzen und erneut 'In Cloud sichern'.")
+                st.dataframe(luecken)
+                st.info("💡 Tipp: Ergänzen Sie diese Konten im Master-Excel und nutzen Sie 'In Cloud sichern' in Phase 3.")
             else:
-                st.success("✅ Hervorragend! Alle Konten Ihrer SuSa sind bereits in der Cloud bekannt.")
+                st.success("✅ Alles bestens! Sämtliche Konten sind in der Cloud zugeordnet.")
         else:
-            st.warning("Struktur-Spalten konnten nicht gefunden werden. Bitte laden Sie das Mapping in Phase 3.")
+            st.warning("Mapping-Struktur nicht erkannt. Bitte laden Sie das Mapping in Phase 3 erneut aus der Cloud.")
+            # Diagnose-Hilfe für dich:
+            with st.expander("Technische Spalten-Details"):
+                st.write("Vorhandene Spalten:", list(df.columns))
     else:
-        st.warning("Keine Daten vorhanden. Bitte gehen Sie zurück zu Phase 3 und laden Sie das 'Mapping aus der Cloud'.")
+        st.warning("Bitte führen Sie zuerst in Phase 3 den Cloud-Import durch.")
+
 
 elif phase == "5: Abschluss prüfen":
     st.header("Phase 5: Interaktive Struktur-Bilanz")
