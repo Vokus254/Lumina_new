@@ -25,35 +25,44 @@ elif phase == "2: Unternehmen verstehen":
     st.selectbox("Abschluss-Standard", ["HGB (Konzern)", "HGB (Einzelabschluss)"])
 
 elif phase == "3: Zahlen hochladen (SuSa)":
-    st.header("Phase 3: Hierarchisches KI-Mapping")
+    st.header("Phase 3: Master-Mapping & SuSa-Upload")
     
-    # Import sicherstellen
-    try:
-        from mapping import get_dynamic_mapping
-    except ImportError:
-        st.error("Datei 'mapping.py' fehlerhaft oder nicht gefunden!")
-        st.stop()
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("1. Master-Mapping")
+        mapping_file = st.file_uploader("Laden Sie Ihre Master-Mapping Excel hoch", type=["xlsx"])
+    
+    with col2:
+        st.subheader("2. Mandanten-SuSa")
+        susa_file = st.file_uploader("Laden Sie die aktuelle SuSa hoch", type=["xlsx"])
 
-    uploaded_file = st.file_uploader("SuSa-Excel hochladen", type=["xlsx"])
-    
-    if uploaded_file is not None:
-        # Einlesen ab Zeile 2
-        df = pd.read_excel(uploaded_file, header=1)
-        df = df.dropna(subset=['KontoNr'])
+    if mapping_file and susa_file:
+        import pandas as pd
         
-        # KontoNr sauber formatieren
-        df['KontoNr'] = df['KontoNr'].astype(float).astype(int).astype(str)
+        # Mapping laden (wir gehen davon aus, dass KontoNr in Zeile 1 oder 2 steht)
+        df_map = pd.read_excel(mapping_file, header=0) 
+        # SuSa laden (Header in Zeile 2 nach deinem Muster)
+        df_susa = pd.read_excel(susa_file, header=1)
         
-        # Mapping der 7 Ebenen über die neue dynamische Funktion
+        # KontoNr in beiden Dateien harmonisieren (Text-Format)
+        df_map['KontoNr'] = df_map['KontoNr'].astype(str)
+        df_susa['KontoNr'] = df_susa['KontoNr'].astype(float).astype(int).astype(str)
+        
+        # DER AUTOMATISMUS: Zusammenführen der Daten (Left Join)
+        # Alle Spalten aus dem Mapping werden an die SuSa angehängt
+        df_final = pd.merge(df_susa, df_map, on='KontoNr', how='left')
+        
+        # Fehlende Mappings markieren
         for i in range(1, 8):
-            col_name = f'Ausweis_{i}'
-            df[col_name] = df['KontoNr'].apply(lambda x: get_dynamic_mapping(x).get(col_name, "Nicht zugeordnet"))
+            df_final[f'Ausweis_{i}'] = df_final[f'Ausweis_{i}'].fillna("Nicht zugeordnet")
+            
+        st.session_state['susa_data'] = df_final
+        st.success("Automatisches Mapping abgeschlossen!")
         
-        st.session_state['susa_data'] = df
-        st.success("Dynamisches Mapping angewendet (inkl. Bereichserkennung)!")
-        
-        # Anzeige der Ergebnisse
-        st.dataframe(df[['KontoNr', 'Kontobezeichnung', 'Ausweis_4', 'Ausweis_5', 'Ausweis_7']], hide_index=True)
+        # Vorschau der gemappten Daten
+        st.dataframe(df_final[['KontoNr', 'Kontobezeichnung', 'Ausweis_4', 'Ausweis_5', 'Ausweis_7']], hide_index=True)
+
 
 elif phase == "4: Prüfen & Optimieren":
     st.header("Phase 4: Smart Interview & Nachmapping")
