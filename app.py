@@ -105,5 +105,47 @@ elif phase == "5: Abschluss prüfen":
 
 elif phase == "6: Export & Versand":
     st.header("Phase 6: Das Finale")
-    st.button("Banken-PDF generieren")
-    st.button("E-Bilanz (XML) exportieren")
+    
+    if 'susa_data' in st.session_state:
+        st.subheader("Ihre Export-Dokumente")
+        
+        # Vorbereitung der Audit-Daten
+        korrektur = st.session_state.get('korrektur_ewb', 0.0)
+        audit_text = f"""
+        LUMINA AUDIT TRAIL REPORT
+        =========================
+        Datum: 10.05.2026
+        Mandant: Beispiel GmbH
+        
+        GEPRÜFTE POSITIONEN:
+        - Forderungen aus L&L:
+          Ursprungswert: 45.000,00 €
+          Korrektur (EWB): -{korrektur:,.2f} €
+          Finaler Bilanzwert: {45000 - korrektur:,.2f} €
+          Begründung: Manuelle Nutzerangabe (Ausfallrisiko identifiziert).
+          HGB-Referenz: § 252 Abs. 1 Nr. 4 HGB
+        
+        STATUS: PRÜFUNGSSICHER VORBEREITET
+        """
+
+        # 1. Download-Button für das Prüfer-Protokoll
+        st.download_button(
+            label="📄 Audit-Trail Exportieren (TXT)",
+            data=audit_text,
+            file_name="Lumina_Audit_Trail.txt",
+            mime="text/plain"
+        )
+        
+        # 2. Platzhalter für weitere Exporte
+        col1, col2 = st.columns(2)
+        with col1:
+            st.button("🏦 Banken-PDF generieren", disabled=False)
+            st.caption("Layout: Profi-Blau / Inhaltsverzeichnis inkl.")
+        with col2:
+            st.button("📊 E-Bilanz XML (Finanzamt)", disabled=True)
+            st.caption("Modul wird in v1.1 freigeschaltet.")
+
+        st.balloons() # Ein kleiner Erfolgseffekt zum Abschluss!
+    else:
+        st.warning("Keine Daten zum Exportieren vorhanden.")
+
