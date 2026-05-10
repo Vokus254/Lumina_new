@@ -126,19 +126,35 @@ elif phase == "3: Zahlen hochladen (SuSa)":
 
 
 elif phase == "4: Prüfen & Optimieren":
-    st.header("Phase 4: Lücken-Analyse")
+    st.header("Phase 4: Lücken-Analyse & Qualitätssicherung")
+    
+    # Wir prüfen, ob Daten aus Phase 3 (Upload oder Cloud) vorhanden sind
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data']
+        
+        # Suche nach dem Klärungsposten
         a1_col = next((c for c in df.columns if 'Ausweis_1' in str(c)), None)
+        
         if a1_col:
             luecken = df[df[a1_col] == "9. KLÄRUNGSPOSTEN (Mapping fehlt)"]
+            
             if not luecken.empty:
-                st.error(f"Gefunden: {len(luecken)} Konten ohne Zuordnung im Master.")
-                st.dataframe(luecken)
+                st.error(f"Achtung: {len(luecken)} Konten sind in der Cloud noch nicht gemappt!")
+                
+                # Berechnung der betroffenen Summe
+                saldo_col = next((c for c in df.columns if '2025' in str(c)), df.columns[-1])
+                summe_luecke = luecken[saldo_col].sum()
+                
+                st.metric("Summe ungeklärter Posten", f"{summe_luecke:,.2f} €")
+                st.dataframe(luecken[['KontoNr', 'Kontobezeichnung_x', saldo_col]])
+                
+                st.info("💡 Diese Konten sollten Sie im Master-Mapping ergänzen und erneut 'In Cloud sichern'.")
             else:
-                st.success("Alle Konten sind erfolgreich zugeordnet.")
+                st.success("✅ Hervorragend! Alle Konten Ihrer SuSa sind bereits in der Cloud bekannt.")
+        else:
+            st.warning("Struktur-Spalten konnten nicht gefunden werden. Bitte laden Sie das Mapping in Phase 3.")
     else:
-        st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
+        st.warning("Keine Daten vorhanden. Bitte gehen Sie zurück zu Phase 3 und laden Sie das 'Mapping aus der Cloud'.")
 
 elif phase == "5: Abschluss prüfen":
     st.header("Phase 5: Interaktive Struktur-Bilanz")
