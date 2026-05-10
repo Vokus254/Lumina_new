@@ -96,11 +96,21 @@ elif phase == "3: Zahlen hochladen (SuSa)":
             # OPTIONAL: In Supabase speichern
             if st.button("Dieses Master-Mapping in Cloud sichern"):
                 with st.spinner("Speichere in Supabase..."):
-                    for _, row in df_map.iterrows():
-                        m_data = {"konto_nr": str(row[k_map])}
-                        for i in range(1, 8):
-                            m_data[f"ausweis_{i}"] = str(row.get(f"Ausweis_{i}", ""))
-                        supabase.table("master_mapping").upsert(m_data).execute()
+                    # In Phase 3 der app.py beim Speichern:
+for _, row in df_map.iterrows():
+    # Wir nutzen exakt den Namen aus deiner Supabase-Tabelle: 'Konto_nr'
+    m_data = {
+        "Konto_nr": str(row[k_map]).strip().replace('.0', ''), 
+        "ausweis_1": str(row.get("Ausweis_1", "")),
+        "ausweis_2": str(row.get("Ausweis_2", "")),
+        "ausweis_3": str(row.get("Ausweis_3", "")),
+        "ausweis_4": str(row.get("Ausweis_4", "")),
+        "ausweis_5": str(row.get("Ausweis_5", "")),
+        "ausweis_6": str(row.get("Ausweis_6", "")),
+        "ausweis_7": str(row.get("Ausweis_7", ""))
+    }
+    supabase.table("master_mapping").upsert(m_data).execute()
+
                     st.success("Mapping dauerhaft gespeichert!")
             
             st.dataframe(df_final.head(10))
