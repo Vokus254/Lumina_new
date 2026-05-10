@@ -40,47 +40,45 @@ elif phase == "3: Zahlen hochladen (SuSa)":
     
     if uploaded_file:
         import pandas as pd
-        # Wir lesen ab Zeile 2 (header=1), damit 'KontoNr' erkannt wird
+        # Header in Zeile 2 (Index 1)
         df = pd.read_excel(uploaded_file, header=1)
         
-        # Bereinigung: Entferne leere Zeilen und konvertiere KontoNr zu Text
+        # Bereinigung: Nur Zeilen mit Kontonummern behalten
         df = df.dropna(subset=['KontoNr'])
-        df['KontoNr'] = df['KontoNr'].astype(int).astype(str)
+        df['KontoNr'] = df['KontoNr'].astype(float).astype(int).astype(str)
         
-        # Mapping-Tabelle laden
+        # Mapping durchführen
         mapping_tabelle = get_hgb_mapping("SKR03")
-        
-        # Mapping durchführen: Wir erstellen die neue Spalte 'HGB_Position'
         df['HGB_Position'] = df['KontoNr'].map(mapping_tabelle)
         
-        # Speichern für die nächsten Phasen
+        # Speichern für andere Phasen
         st.session_state['susa_data'] = df
         
-        st.success("SuSa erfolgreich eingelesen und gemappt!")
+        # --- SICHERE SPALTEN-ERKENNUNG ---
+        # Wir suchen die Spalte, die das aktuelle Jahr enthält
+        all_cols = df.columns.tolist()
+        # Wir suchen nach "2025" in den Spaltennamen
+        saldo_col = next((c for c in all_cols if "2025" in str(c)), all_cols[2] if len(all_cols) > 2 else None)
+
+        st.success("SuSa erfolgreich eingelesen!")
         
-        # --- VISUALISIERUNG DER ERGEBNISSE ---
-        st.subheader("Vorschau des KI-Mappings")
-        
-        # Wir zeigen nur Zeilen an, die wir erfolgreich zugeordnet haben
+        # --- VISUALISIERUNG ---
         erkannt = df[df['HGB_Position'].notna()]
         
         if not erkannt.empty:
-            # Wir nehmen die Spalte für 2025 (C) für die Anzeige
-            spalte_2025 = "31.12.2025" if "31.12.2025" in df.columns else df.columns[2]
+            st.subheader("Vorschau des KI-Mappings")
             
-            st.dataframe(
-                erkannt[['KontoNr', 'Kontobezeichnung', spalte_2025, 'HGB_Position']],
-                column_config={
-                    spalte_2025: st.column_config.NumberColumn("Saldo 2025", format="%.2f €"),
-                    "HGB_Position": "Zugeordnete Bilanzposition"
-                },
-                hide_index=True
-            )
+            # Wir bauen eine saubere Anzeige-Tabelle ohne komplexe Spaltenkonfiguration, um Fehler zu vermeiden
+            display_df = erkannt[['KontoNr', 'Kontobezeichnung', saldo_col, 'HGB_Position']].copy()
             
+            # Spalten für die Anzeige umbenennen (verhindert JSON-Fehler)
+            display_df.columns = ['Konto', 'Bezeichnung', 'Saldo 2025', 'HGB-Position']
+            
+            st.dataframe(display_df, hide_index=True)
             st.info(f"LUMINA hat {len(erkannt)} Konten automatisch identifiziert.")
         else:
-            st.warning("Keine Konten automatisch erkannt. Bitte mapping.py prüfen.")
-            st.write("Verfügbare Konten im File:", df['KontoNr'].unique()[:10])
+            st.warning("Mapping geladen, aber keine Konten aus der Excel gefunden. Prüfe die Nummern in deiner mapping.py!")
+            st.write("Erste 5 Konten aus deiner Excel:", df['KontoNr'].head(5).tolist())
 
 
 elif phase == "4: Prüfen & Optimieren":
