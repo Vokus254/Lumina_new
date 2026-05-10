@@ -1,22 +1,30 @@
-# mapping.py - Basierend auf deinem internen Mapping-File
-def get_hgb_mapping(skr="Eigener"):
+# mapping.py
+def get_hgb_structure():
+    # Hier hinterlegen wir deine 7-stufige Hierarchie
     return {
-        # Sachanlagen
-        "1000": "Grundstücke mit Betriebsbauten",
-        "1100": "Betriebsbauten auf fremden Grundstücken",
-        "1200": "Außenanlagen",
-        "5000": "Technische Anlagen und Maschinen",
-        
-        # Umlaufvermögen / Vorräte
-        "10100": "Vorräte an Lebensmitteln",
-        "10102": "Vorräte an Betriebsstoffen",
-        
-        # Forderungen
-        "11000": "Forderungen an Rentenversicherungsträger",
-        "11001": "Forderungen an Pflegekassen",
-        "11002": "Forderungen an Selbstzahler/Ämter",
-        
-        # Finanzmittel
-        "12000": "Kasse",
-        "12103": "Bank (Sparkasse Duisburg)"
+        "1000": {
+            "Ausweis_1": "Bilanz",
+            "Ausweis_2": "Aktiva",
+            "Ausweis_3": "Anlagevermögen",
+            "Ausweis_4": "Sachanlagen",
+            "Ausweis_5": "Grundstücke mit Betriebsbauten",
+            "Ausweis_6": "Bebaute Grundstücke",
+            "Ausweis_7": "Betriebsbauten"
+        },
+        "1100": {
+            "Ausweis_1": "Bilanz",
+            "Ausweis_2": "Aktiva",
+            "Ausweis_3": "Anlagevermögen",
+            "Ausweis_4": "Sachanlagen",
+            "Ausweis_5": "Betriebsbauten auf fremden Grundstücken",
+            "Ausweis_6": "Bebaute Grundstücke",
+            "Ausweis_7": "Rathaus im Dorf"
+        }
+        # Erweitere diese Liste um deine weiteren Konten
     }
+
+# Diese Funktion lassen wir als "Sicherheitsnetz" drin
+def get_hgb_mapping(skr="Eigener"):
+    structure = get_hgb_structure()
+    # Gibt für die einfache Anzeige nur Ebene 5 zurück
+    return {k: v["Ausweis_5"] for k, v in structure.items()}
