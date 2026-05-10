@@ -18,24 +18,27 @@ phase = st.sidebar.radio(
      "4: Prüfen & Optimieren", "5: Abschluss prüfen", "6: Export & Versand"]
 )
 
-# Innerhalb von Phase 3, nachdem df_map erstellt wurde:
-if st.button("Master-Mapping in Datenbank sichern"):
-    with st.spinner("Speichere in Supabase..."):
-        for _, row in df_map.iterrows():
-            # Wir bereiten die Zeile für Supabase vor
-            mapping_data = {
-                "konto_nr": str(row[k_map]),
-                "ausweis_1": str(row.get("Ausweis_1", "")),
-                "ausweis_2": str(row.get("Ausweis_2", "")),
-                "ausweis_3": str(row.get("Ausweis_3", "")),
-                "ausweis_4": str(row.get("Ausweis_4", "")),
-                "ausweis_5": str(row.get("Ausweis_5", "")),
-                "ausweis_6": str(row.get("Ausweis_6", "")),
-                "ausweis_7": str(row.get("Ausweis_7", ""))
-            }
-            # Der 'upsert' Befehl überschreibt existierende Konten oder legt neue an
-            supabase.table("master_mapping").upsert(mapping_data).execute()
-        st.success("Mapping dauerhaft gespeichert!")
+elif phase == "3: Zahlen hochladen (SuSa)":
+    st.header("Phase 3: Master-Mapping & SuSa")
+    # ... dein bisheriger Code zum Hochladen ...
+    
+    if map_file:
+        df_map = get_clean_df(map_file) # Hier wird df_map definiert!
+        st.dataframe(df_map.head(5))
+        
+        # DER BUTTON MUSS IN DIESEN IF-BLOCK:
+        if st.button("Master-Mapping in Datenbank sichern"):
+            with st.spinner("Speichere in Supabase..."):
+                for _, row in df_map.iterrows():
+                    # ... dein Speicher-Code ...
+                    mapping_data = {
+                        "konto_nr": str(row.get(k_map)), # k_map muss hier auch bekannt sein
+                        "ausweis_1": str(row.get("Ausweis_1", "")),
+                        # ... usw.
+                    }
+                    supabase.table("master_mapping").upsert(mapping_data).execute()
+                st.success("Erfolgreich in der Cloud gespeichert!")
+
 
 
 elif phase == "4: Prüfen & Optimieren":
