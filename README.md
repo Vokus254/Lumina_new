@@ -47,6 +47,8 @@ Neue Navigation:
 7. Interpretation
 8. Export
 
+Mandanten werden über die Auswahl sofort aktiv gesetzt. Für eine Neuanlage muss in der Mandantenmaske `Neuen Mandanten anlegen` aktiviert werden, damit kein bestehender Mandant überschrieben wird.
+
 ## Musterdateien
 
 Im Ordner `templates` liegen ein Muster-Kontenmapping und eine Muster-SuSa. Die App bietet beide Dateien im Bereich `Upload & Mapping` als Download an.

@@ -1271,6 +1271,10 @@ st.sidebar.write("Export:", st.session_state.export_status)
 # ------------------------------------------------------------
 st.title("📊 LUMINA Mapping – internes Abschluss-Cockpit")
 st.caption("Von der SuSa zum prüferfreundlichen Excel-Abschluss-Paket.")
+st.markdown(
+    f"**Aktiver Mandant:** {st.session_state.active_mandant.get('mandantenname') or st.session_state.mandant}  \n"
+    f"**Aktives Jahr:** {st.session_state.active_year.get('jahr') or st.session_state.abschlussjahr}"
+)
 
 
 # ------------------------------------------------------------
@@ -1307,21 +1311,30 @@ elif phase == "2 Mandanten":
         st.warning(mandant_err)
 
     if mandants:
-        labels = {f"{m.get('mandantenname', 'Ohne Namen')} ({m.get('rechtsform', '-')})": m for m in mandants}
+        label_counts = {}
+        for m in mandants:
+            base = f"{m.get('mandantenname', 'Ohne Namen')} ({m.get('rechtsform', '-')})"
+            label_counts[base] = label_counts.get(base, 0) + 1
+        labels = {}
+        for m in mandants:
+            base = f"{m.get('mandantenname', 'Ohne Namen')} ({m.get('rechtsform', '-')})"
+            label = f"{base} [{str(m.get('id', ''))[:8]}]" if label_counts[base] > 1 else base
+            labels[label] = m
         current_label = next((label for label, item in labels.items() if item.get("id") == st.session_state.active_mandant_id), list(labels.keys())[0])
         selected_label = st.selectbox("Bestehenden Mandanten auswählen", list(labels.keys()), index=list(labels.keys()).index(current_label))
         selected_mandant = labels[selected_label]
-        if st.button("Mandant aktiv setzen", use_container_width=True):
+        if selected_mandant.get("id") != st.session_state.active_mandant_id:
             st.session_state.active_mandant = selected_mandant
             st.session_state.active_mandant_id = selected_mandant.get("id")
             st.session_state.mandant = selected_mandant.get("mandantenname", st.session_state.mandant)
-            st.success(f"Aktiver Mandant: {st.session_state.mandant}")
             audit_log("select_mandant", f"Mandant aktiviert: {st.session_state.mandant}", st.session_state.active_mandant_id)
+            st.rerun()
     else:
         st.info("Noch kein Mandant aus Supabase geladen. Du kannst unten einen Mandanten anlegen.")
 
     st.markdown("### Mandanten-Stammdaten")
-    current = st.session_state.active_mandant or {}
+    create_new_mandant = st.checkbox("Neuen Mandanten anlegen", value=False)
+    current = {} if create_new_mandant else (st.session_state.active_mandant or {})
     with st.form("mandant_form"):
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -1344,8 +1357,9 @@ elif phase == "2 Mandanten":
         save_mandant = st.form_submit_button("Mandant speichern", type="primary", use_container_width=True)
 
     if save_mandant:
+        is_new_mandant = create_new_mandant or not current.get("id")
         row = {
-            "id": current.get("id") or new_id(),
+            "id": new_id() if is_new_mandant else current.get("id"),
             "mandantenname": mandantenname,
             "rechtsform": rechtsform,
             "branche": branche,
@@ -1361,7 +1375,7 @@ elif phase == "2 Mandanten":
             "besonderheiten": besonderheiten,
             "updated_at": now_iso(),
         }
-        if "created_at" not in current:
+        if is_new_mandant or "created_at" not in current:
             row["created_at"] = now_iso()
         err = supabase_upsert("mandants", row)
         if err:
@@ -1380,13 +1394,16 @@ elif phase == "2 Mandanten":
             st.warning(year_err)
         if years:
             year_labels = {str(y.get("jahr")): y for y in years}
-            selected_year_label = st.selectbox("Abschlussjahr auswählen", list(year_labels.keys()))
-            if st.button("Jahr aktiv setzen", use_container_width=True):
-                year = year_labels[selected_year_label]
+            current_year_label = str(st.session_state.active_year.get("jahr") or st.session_state.abschlussjahr)
+            if current_year_label not in year_labels:
+                current_year_label = list(year_labels.keys())[0]
+            selected_year_label = st.selectbox("Abschlussjahr auswählen", list(year_labels.keys()), index=list(year_labels.keys()).index(current_year_label))
+            year = year_labels[selected_year_label]
+            if year.get("id") != st.session_state.active_year_id:
                 st.session_state.active_year = year
                 st.session_state.active_year_id = year.get("id")
                 st.session_state.abschlussjahr = int(year.get("jahr"))
-                st.success(f"Aktives Jahr: {st.session_state.abschlussjahr}")
+                st.rerun()
 
         with st.form("year_form"):
             col_y1, col_y2, col_y3 = st.columns(3)
