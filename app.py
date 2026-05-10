@@ -10,6 +10,11 @@ try:
 except Exception:
     create_client = None
 
+try:
+    from mapping import get_dynamic_mapping
+except Exception:
+    get_dynamic_mapping = None
+
 
 # ============================================================
 # LUMINA Mapping – internes Abschluss-Cockpit
@@ -55,7 +60,7 @@ def normalize_konto(value) -> str:
     if pd.isna(value):
         return ""
     s = str(value).strip()
-    s = s.replace(" ", "")
+    s = re.sub(r"\s+", "", s)
     if s.endswith(".0"):
         s = s[:-2]
     s = re.sub(r"[^0-9A-Za-z_-]", "", s)
@@ -69,7 +74,7 @@ def parse_number(value) -> float:
     if isinstance(value, (int, float)):
         return float(value)
 
-    s = str(value).strip()
+    s = str(value).strip().replace("\u00a0", "")
     if s in ["", "-", "None", "nan"]:
         return 0.0
 
@@ -77,6 +82,9 @@ def parse_number(value) -> float:
     if s.startswith("(") and s.endswith(")"):
         negative = True
         s = s[1:-1]
+    if s.endswith("-"):
+        negative = True
+        s = s[:-1]
 
     s = (
         s.replace("€", "")
@@ -131,7 +139,7 @@ def detect_konto_col(df: pd.DataFrame) -> str | None:
     candidates = []
     for c in df.columns:
         name = str(c).lower()
-        if "konto" in name or "account" in name:
+        if "konto" in name or "account" in name or name in {"kt", "kto", "kontonr"}:
             candidates.append(c)
     return candidates[0] if candidates else None
 
@@ -148,7 +156,7 @@ def detect_value_cols(df: pd.DataFrame) -> list[str]:
     value_cols = []
     for c in df.columns:
         name = str(c).lower()
-        if any(x in name for x in ["saldo", "betrag", "wert", "summe", "202", "31.12", "haben", "soll"]):
+        if any(x in name for x in ["saldo", "betrag", "wert", "summe", "202", "31.12", "haben", "soll", "debit", "credit", "balance"]):
             # Spalten mit Konto-/Bezeichnung nicht versehentlich als Wert nehmen
             if "konto" not in name and "bezeichnung" not in name and "text" not in name:
                 value_cols.append(c)
@@ -191,6 +199,32 @@ def normalize_susa(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         "value_cols": value_cols,
     }
     return out, meta
+
+
+def is_unassigned_mapping(row: pd.Series) -> bool:
+    values = [str(row.get(f"Ausweis_{i}", "")).strip() for i in range(1, 8)]
+    return all(v == "" or v == KLARUNG or v.lower() == "nicht zugeordnet" for v in values)
+
+
+def builtin_mapping_for(konto_nr: str) -> dict:
+    """Liefert die lokale HGB-Regel aus mapping.py, falls eine echte Zuordnung existiert."""
+    if get_dynamic_mapping is None:
+        return {}
+    try:
+        candidate = get_dynamic_mapping(konto_nr)
+    except Exception:
+        return {}
+    if not candidate:
+        return {}
+
+    normalized = {f"Ausweis_{i}": str(candidate.get(f"Ausweis_{i}", "") or "").strip() for i in range(1, 8)}
+    if all(v == "" or v.lower() == "nicht zugeordnet" for v in normalized.values()):
+        return {}
+    return normalized
+
+
+def empty_mapping_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=["KontoNr"] + [f"Ausweis_{i}" for i in range(1, 8)])
 
 
 def normalize_mapping(df: pd.DataFrame) -> pd.DataFrame:
@@ -241,6 +275,21 @@ def apply_mapping(susa: pd.DataFrame, mapping: pd.DataFrame) -> pd.DataFrame:
     for i in range(1, 8):
         col = f"Ausweis_{i}"
         mapped[col] = mapped[col].replace("", pd.NA).fillna(KLARUNG)
+
+    for idx, row in mapped.iterrows():
+        if row["Mapping_Status"] != "Klärung" and not is_unassigned_mapping(row):
+            continue
+        fallback = builtin_mapping_for(row["KontoNr"])
+        if not fallback:
+            continue
+        for i in range(1, 8):
+            col = f"Ausweis_{i}"
+            value = fallback.get(col, "")
+            if value:
+                mapped.at[idx, col] = value
+            elif mapped.at[idx, col] == KLARUNG:
+                mapped.at[idx, col] = "Vorschlag offen"
+        mapped.at[idx, "Mapping_Status"] = "Vorschlag"
 
     return mapped
 
@@ -489,12 +538,14 @@ elif phase == "3 Upload & Mapping":
     if st.button("🚀 Mapping starten", type="primary", use_container_width=True):
         if st.session_state.susa_norm is None:
             st.error("Bitte zuerst eine SuSa hochladen.")
-        elif st.session_state.mapping is None:
+        elif st.session_state.mapping is None and get_dynamic_mapping is None:
             st.error("Bitte zuerst ein Mapping hochladen oder aus Supabase laden.")
         else:
-            st.session_state.mapped = apply_mapping(st.session_state.susa_norm, st.session_state.mapping)
+            active_mapping = st.session_state.mapping if st.session_state.mapping is not None else empty_mapping_frame()
+            st.session_state.mapped = apply_mapping(st.session_state.susa_norm, active_mapping)
             count_klarung = int((st.session_state.mapped["Mapping_Status"] == "Klärung").sum())
-            st.success(f"Mapping abgeschlossen. Klärungsposten: {count_klarung}")
+            count_vorschlag = int((st.session_state.mapped["Mapping_Status"] == "Vorschlag").sum())
+            st.success(f"Mapping abgeschlossen. Vorschläge: {count_vorschlag}. Klärungsposten: {count_klarung}")
             st.dataframe(st.session_state.mapped.head(50), use_container_width=True, hide_index=True)
 
 
@@ -511,10 +562,11 @@ elif phase == "4 Prüfen":
         value_cols = st.session_state.meta.get("value_cols", detect_value_cols(df))
         klarung = df[(df["Mapping_Status"] == "Klärung") | (df["Ausweis_1"] == KLARUNG)].copy()
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Konten gesamt", f"{len(df):,}".replace(",", "."))
         c2.metric("Gemappt", f"{(df['Mapping_Status'] == 'gemappt').sum():,}".replace(",", "."))
-        c3.metric("Klärung", f"{len(klarung):,}".replace(",", "."))
+        c3.metric("Vorschläge", f"{(df['Mapping_Status'] == 'Vorschlag').sum():,}".replace(",", "."))
+        c4.metric("Klärung", f"{len(klarung):,}".replace(",", "."))
 
         if value_cols and not klarung.empty:
             main_value = value_cols[-1]
@@ -604,6 +656,3 @@ elif phase == "6 Export":
         )
 
         st.info("PDF würde ich erst später ergänzen. Für Wirtschaftsprüfer ist zuerst ein sauberer Excel-Export wertvoller.")
-
-
-
