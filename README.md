@@ -12,11 +12,13 @@ streamlit run app.py
 ## Nutzung
 
 1. Mandant und Abschlussjahr festlegen.
-2. Master-Mapping auswählen, als Excel-Datei hochladen oder optional aus Supabase laden.
-3. Mandanten-SuSa hochladen.
-4. Mapping starten und Klärungsposten prüfen.
-5. Abschlussansicht kontrollieren und Excel-Paket exportieren.
-6. Interpretation nutzen, um Auffälligkeiten, Kontentreiber und eine KI-Arbeitsgrundlage für Anhang, Lagebericht und Management-Reporting zu erzeugen.
+2. Mandanten-Onboarding und Reporting-Profil pflegen.
+3. Master-Mapping auswählen, als Excel-Datei hochladen oder optional aus Supabase laden.
+4. Eine oder mehrere Mandanten-SuSa-Dateien hochladen.
+5. Mapping starten und Klärungsposten prüfen.
+6. Abschlussansicht kontrollieren.
+7. Interpretation nutzen, um Auffälligkeiten, Kontentreiber und eine KI-Arbeitsgrundlage für Anhang, Lagebericht und Management-Reporting zu erzeugen.
+8. Excel-Export erzeugen.
 
 Wenn kein Master-Mapping vorhanden ist, nutzt die App lokale Fallback-Regeln aus `mapping.py`. Diese Treffer werden als `Vorschlag` markiert und sollten fachlich geprüft werden, bevor sie dauerhaft ins Master-Mapping übernommen werden.
 
@@ -25,6 +27,23 @@ Wenn kein Master-Mapping vorhanden ist, nutzt die App lokale Fallback-Regeln aus
 Für mehrere Master-Mappings in Supabase braucht die Tabelle `master_mapping` zusätzlich die Spalte `mapping_name` und einen eindeutigen Schlüssel auf `mapping_name` + `konto_nr`.
 
 Die Datei `supabase_master_mapping_migration.sql` enthält die dafür nötigen SQL-Befehle. Ohne diese Migration funktioniert weiterhin das bisherige Standard-Mapping.
+
+## Mandantenfähigkeit
+
+Die Datei `supabase_mandant_management.sql` legt die Tabellen für Mandanten, Abschlussjahre, SuSa-Metadaten, Onboarding-Antworten, Reporting-Profile, Mapping-Memory und Audit-Log an.
+
+Die App bleibt lauffähig, wenn diese Tabellen noch fehlen. In diesem Fall zeigt sie eine verständliche Supabase-Meldung und der bisherige Upload-/Mapping-Workflow bleibt nutzbar.
+
+Neue Navigation:
+
+1. Willkommen
+2. Mandanten
+3. Onboarding
+4. Upload & Mapping
+5. Prüfen
+6. Abschlussansicht
+7. Interpretation
+8. Export
 
 ## Musterdateien
 
