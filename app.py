@@ -28,11 +28,9 @@ elif phase == "3: Zahlen hochladen (SuSa)":
     st.header("Phase 3: Master-Mapping & SuSa-Upload")
     
     col1, col2 = st.columns(2)
-    
     with col1:
         st.subheader("1. Master-Mapping")
         mapping_file = st.file_uploader("Laden Sie Ihre Master-Mapping Excel hoch", type=["xlsx"])
-    
     with col2:
         st.subheader("2. Mandanten-SuSa")
         susa_file = st.file_uploader("Laden Sie die aktuelle SuSa hoch", type=["xlsx"])
@@ -40,28 +38,43 @@ elif phase == "3: Zahlen hochladen (SuSa)":
     if mapping_file and susa_file:
         import pandas as pd
         
-        # Mapping laden (wir gehen davon aus, dass KontoNr in Zeile 1 oder 2 steht)
-        df_map = pd.read_excel(mapping_file, header=0) 
-        # SuSa laden (Header in Zeile 2 nach deinem Muster)
-        df_susa = pd.read_excel(susa_file, header=1)
+        # Funktion zum intelligenten Einlesen (sucht die Header-Zeile)
+        def intelligent_read(file, header_search="Konto"):
+            df_temp = pd.read_excel(file, header=None)
+            header_idx = 0
+            for i, row in df_temp.head(10).iterrows():
+                if row.astype(str).str.contains(header_search, case=False).any():
+                    header_idx = i
+                    break
+            df_final = pd.read_excel(file, header=header_idx)
+            # Finde die genaue Spalte, die 'Konto' enthält
+            k_col = next((c for c in df_final.columns if 'konto' in str(c).lower()), None)
+            if k_col:
+                df_final[k_col] = df_final[k_col].astype(str).str.split('.').str[0].str.strip()
+            return df_final, k_col
+
+        # Beide Dateien einlesen
+        df_map, map_k_col = intelligent_read(mapping_file)
+        df_susa, susa_k_col = intelligent_read(susa_file)
         
-        # KontoNr in beiden Dateien harmonisieren (Text-Format)
-        df_map['KontoNr'] = df_map['KontoNr'].astype(str)
-        df_susa['KontoNr'] = df_susa['KontoNr'].astype(float).astype(int).astype(str)
-        
-        # DER AUTOMATISMUS: Zusammenführen der Daten (Left Join)
-        # Alle Spalten aus dem Mapping werden an die SuSa angehängt
-        df_final = pd.merge(df_susa, df_map, on='KontoNr', how='left')
-        
-        # Fehlende Mappings markieren
-        for i in range(1, 8):
-            df_final[f'Ausweis_{i}'] = df_final[f'Ausweis_{i}'].fillna("Nicht zugeordnet")
+        if map_k_col and susa_k_col:
+            # Der Automatismus: Join über die gefundenen Kontospalten
+            df_final = pd.merge(df_susa, df_map, left_on=susa_k_col, right_on=map_k_col, how='left')
             
-        st.session_state['susa_data'] = df_final
-        st.success("Automatisches Mapping abgeschlossen!")
-        
-        # Vorschau der gemappten Daten
-        st.dataframe(df_final[['KontoNr', 'Kontobezeichnung', 'Ausweis_4', 'Ausweis_5', 'Ausweis_7']], hide_index=True)
+            # Aufräumen: Falls Spalten 'Ausweis_1' etc. existieren, fehlende Werte füllen
+            for i in range(1, 8):
+                a_col = f'Ausweis_{i}'
+                if a_col in df_final.columns:
+                    df_final[a_col] = df_final[a_col].fillna("Nicht zugeordnet")
+            
+            st.session_state['susa_data'] = df_final
+            st.success(f"Mapping erfolgreich! Verknüpft über '{susa_k_col}' (SuSa) und '{map_k_col}' (Master).")
+            
+            # Anzeige (wir nehmen die ersten verfügbaren Ausweis-Spalten zur Vorschau)
+            preview_cols = [susa_k_col, 'Kontobezeichnung'] + [c for c in df_final.columns if 'Ausweis' in c][:3]
+            st.dataframe(df_final[preview_cols].head(20), hide_index=True)
+        else:
+            st.error("In einer der Dateien konnte keine Spalte mit 'Konto' gefunden werden.")
 
 
 elif phase == "4: Prüfen & Optimieren":
