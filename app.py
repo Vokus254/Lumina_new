@@ -240,6 +240,29 @@ def is_unassigned_mapping(row: pd.Series) -> bool:
     return all(v == "" or v == KLARUNG or v.lower() == "nicht zugeordnet" for v in values)
 
 
+def is_clarification_value(value) -> bool:
+    return str(value).strip() == KLARUNG
+
+
+def clarification_mask(df: pd.DataFrame) -> pd.Series:
+    mask = df.get("Mapping_Status", pd.Series("", index=df.index)).eq("Klärung")
+    for i in range(1, 8):
+        col = f"Ausweis_{i}"
+        if col in df.columns:
+            mask = mask | df[col].apply(is_clarification_value)
+    return mask
+
+
+def mapping_counts(df: pd.DataFrame) -> dict:
+    klarung = clarification_mask(df)
+    return {
+        "total": len(df),
+        "klarung": int(klarung.sum()),
+        "vorschlag": int((df["Mapping_Status"] == "Vorschlag").sum()) if "Mapping_Status" in df.columns else 0,
+        "gemappt": int(((df["Mapping_Status"] == "gemappt") & ~klarung).sum()) if "Mapping_Status" in df.columns else int((~klarung).sum()),
+    }
+
+
 def builtin_mapping_for(konto_nr: str) -> dict:
     """Liefert die lokale HGB-Regel aus mapping.py, falls eine echte Zuordnung existiert."""
     if get_dynamic_mapping is None:
@@ -259,6 +282,35 @@ def builtin_mapping_for(konto_nr: str) -> dict:
 
 def empty_mapping_frame() -> pd.DataFrame:
     return pd.DataFrame(columns=["KontoNr"] + [f"Ausweis_{i}" for i in range(1, 8)])
+
+
+def clean_manual_mapping_value(value) -> str:
+    text = "" if pd.isna(value) else str(value).strip()
+    return "" if text == KLARUNG else text
+
+
+def rows_to_mapping_updates(rows: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    updates = []
+    skipped = []
+    for _, row in rows.iterrows():
+        konto = normalize_konto(row.get("KontoNr"))
+        if not konto:
+            continue
+        item = {"KontoNr": konto}
+        for i in range(1, 8):
+            item[f"Ausweis_{i}"] = clean_manual_mapping_value(row.get(f"Ausweis_{i}", ""))
+        if not item["Ausweis_1"]:
+            skipped.append(konto)
+            continue
+        updates.append(item)
+    return pd.DataFrame(updates, columns=["KontoNr"] + [f"Ausweis_{i}" for i in range(1, 8)]), skipped
+
+
+def merge_mapping_updates(current_mapping: pd.DataFrame | None, updates: pd.DataFrame) -> pd.DataFrame:
+    base = normalize_mapping(current_mapping) if current_mapping is not None else empty_mapping_frame()
+    if updates.empty:
+        return base
+    return normalize_mapping(pd.concat([base, updates], ignore_index=True))
 
 
 def normalize_mapping(df: pd.DataFrame) -> pd.DataFrame:
@@ -324,6 +376,8 @@ def apply_mapping(susa: pd.DataFrame, mapping: pd.DataFrame) -> pd.DataFrame:
             elif mapped.at[idx, col] == KLARUNG:
                 mapped.at[idx, col] = "Vorschlag offen"
         mapped.at[idx, "Mapping_Status"] = "Vorschlag"
+
+    mapped.loc[clarification_mask(mapped), "Mapping_Status"] = "Klärung"
 
     return mapped
 
@@ -461,6 +515,7 @@ for key, default in {
     "mapping": None,
     "mapped": None,
     "meta": {},
+    "flash_message": None,
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -621,9 +676,8 @@ elif phase == "3 Upload & Mapping":
         else:
             active_mapping = st.session_state.mapping if st.session_state.mapping is not None else empty_mapping_frame()
             st.session_state.mapped = apply_mapping(st.session_state.susa_norm, active_mapping)
-            count_klarung = int((st.session_state.mapped["Mapping_Status"] == "Klärung").sum())
-            count_vorschlag = int((st.session_state.mapped["Mapping_Status"] == "Vorschlag").sum())
-            st.success(f"Mapping abgeschlossen. Vorschläge: {count_vorschlag}. Klärungsposten: {count_klarung}")
+            counts = mapping_counts(st.session_state.mapped)
+            st.success(f"Mapping abgeschlossen. Vorschläge: {counts['vorschlag']}. Klärungsposten: {counts['klarung']}")
             st.dataframe(display_dataframe(st.session_state.mapped.head(50), st.session_state.meta.get("value_cols", [])), use_container_width=True, hide_index=True)
 
 
@@ -632,19 +686,23 @@ elif phase == "3 Upload & Mapping":
 # ------------------------------------------------------------
 elif phase == "4 Prüfen":
     st.subheader("Prüfen & Optimieren")
+    if st.session_state.flash_message:
+        st.success(st.session_state.flash_message)
+        st.session_state.flash_message = None
 
     if st.session_state.mapped is None:
         st.warning("Bitte zuerst in Phase 3 das Mapping starten.")
     else:
         df = st.session_state.mapped.copy()
         value_cols = st.session_state.meta.get("value_cols", detect_value_cols(df))
-        klarung = df[(df["Mapping_Status"] == "Klärung") | (df["Ausweis_1"] == KLARUNG)].copy()
+        klarung = df[clarification_mask(df)].copy()
+        counts = mapping_counts(df)
 
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Konten gesamt", f"{len(df):,}".replace(",", "."))
-        c2.metric("Gemappt", f"{(df['Mapping_Status'] == 'gemappt').sum():,}".replace(",", "."))
-        c3.metric("Vorschläge", f"{(df['Mapping_Status'] == 'Vorschlag').sum():,}".replace(",", "."))
-        c4.metric("Klärung", f"{len(klarung):,}".replace(",", "."))
+        c1.metric("Konten gesamt", f"{counts['total']:,}".replace(",", "."))
+        c2.metric("Gemappt", f"{counts['gemappt']:,}".replace(",", "."))
+        c3.metric("Vorschläge", f"{counts['vorschlag']:,}".replace(",", "."))
+        c4.metric("Klärung", f"{counts['klarung']:,}".replace(",", "."))
 
         if value_cols and not klarung.empty:
             main_value = value_cols[-1]
@@ -657,6 +715,56 @@ elif phase == "4 Prüfen":
             show_cols = ["KontoNr", "Kontobezeichnung"] + value_cols + [f"Ausweis_{i}" for i in range(1, 8)]
             show_cols = [c for c in show_cols if c in klarung.columns]
             st.dataframe(display_dataframe(klarung[show_cols], value_cols), use_container_width=True, hide_index=True)
+
+            st.markdown("### Klärungsposten zuordnen")
+            editor_cols = ["KontoNr", "Kontobezeichnung"] + value_cols + [f"Ausweis_{i}" for i in range(1, 8)]
+            editor_cols = [c for c in editor_cols if c in klarung.columns]
+            editor_df = klarung[editor_cols].copy()
+            for i in range(1, 8):
+                col = f"Ausweis_{i}"
+                if col in editor_df.columns:
+                    editor_df[col] = editor_df[col].apply(clean_manual_mapping_value)
+
+            edited = st.data_editor(
+                editor_df,
+                key="klarung_editor",
+                use_container_width=True,
+                hide_index=True,
+                num_rows="fixed",
+                disabled=["KontoNr", "Kontobezeichnung"] + [c for c in value_cols if c in editor_df.columns],
+            )
+
+            save_col, download_col = st.columns(2)
+            with save_col:
+                if st.button("Zuordnungen ins Master-Mapping übernehmen", type="primary", use_container_width=True):
+                    updates, skipped = rows_to_mapping_updates(edited)
+                    if updates.empty:
+                        st.warning("Bitte mindestens Ausweis_1 für eine Klärungszeile ausfüllen.")
+                    else:
+                        st.session_state.mapping = merge_mapping_updates(st.session_state.mapping, updates)
+                        st.session_state.mapped = apply_mapping(st.session_state.susa_norm, st.session_state.mapping)
+                        err = save_mapping_to_supabase(st.session_state.mapping)
+                        if err:
+                            st.error(err)
+                        else:
+                            message = f"{len(updates)} Zuordnung(en) ins Master-Mapping übernommen und nach Supabase gespeichert."
+                            if skipped:
+                                message += f" Nicht übernommen, weil Ausweis_1 fehlt: {', '.join(skipped)}"
+                            st.session_state.flash_message = message
+                            st.rerun()
+
+            with download_col:
+                if st.session_state.mapping is not None:
+                    mapping_buffer = io.BytesIO()
+                    with pd.ExcelWriter(mapping_buffer, engine="openpyxl") as writer:
+                        st.session_state.mapping.to_excel(writer, sheet_name="Master_Mapping", index=False)
+                    st.download_button(
+                        "Aktuelles Master-Mapping herunterladen",
+                        data=mapping_buffer.getvalue(),
+                        file_name="Lumina_Master_Mapping_aktualisiert.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
 
         with st.expander("Vollständiges Mapping-Ergebnis anzeigen"):
             st.dataframe(display_dataframe(df, value_cols), use_container_width=True, hide_index=True)
@@ -700,7 +808,7 @@ elif phase == "6 Export":
         df = st.session_state.mapped.copy()
         value_cols = st.session_state.meta.get("value_cols", detect_value_cols(df))
         pivot = build_pivot(df, 5, value_cols)
-        klarung = df[(df["Mapping_Status"] == "Klärung") | (df["Ausweis_1"] == KLARUNG)].copy()
+        klarung = df[clarification_mask(df)].copy()
 
         st.markdown(
             f"""
@@ -734,4 +842,3 @@ elif phase == "6 Export":
         )
 
         st.info("PDF würde ich erst später ergänzen. Für Wirtschaftsprüfer ist zuerst ein sauberer Excel-Export wertvoller.")
-
