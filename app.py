@@ -1157,6 +1157,22 @@ def supabase_delete(table_name: str, row_id: str) -> str | None:
         return supabase_error_message(table_name, e)
 
 
+def supabase_delete_where(table_name: str, filters: dict) -> str | None:
+    sb = get_supabase_client()
+    if sb is None:
+        return "Supabase ist nicht verbunden."
+    try:
+        query = sb.table(table_name).delete()
+        for key, value in filters.items():
+            if value is None:
+                continue
+            query = query.eq(key, value)
+        query.execute()
+        return None
+    except Exception as e:
+        return supabase_error_message(table_name, e)
+
+
 def mandant_display_name(row: dict | None = None) -> str:
     row = row or st.session_state.get("active_mandant", {})
     return row.get("name") or row.get("mandantenname") or st.session_state.get("mandant", "Beispiel GmbH")
@@ -1560,6 +1576,9 @@ elif phase == "2 Mandanten":
             st.session_state.active_mandant_id = selected_mandant.get("id")
             st.session_state.active_mandant_name = mandant_display_name(selected_mandant)
             st.session_state.mandant = st.session_state.active_mandant_name
+            st.session_state.active_entity = {}
+            st.session_state.active_entity_id = None
+            st.session_state.active_entity_name = ""
             audit_log("select_mandant", f"Mandant aktiviert: {st.session_state.mandant}", st.session_state.active_mandant_id)
             st.rerun()
     else:
@@ -1625,6 +1644,10 @@ elif phase == "2 Mandanten":
             st.session_state.active_mandant_id = row["id"]
             st.session_state.active_mandant_name = row["name"]
             st.session_state.mandant = row["mandantenname"]
+            if is_new_mandant:
+                st.session_state.active_entity = {}
+                st.session_state.active_entity_id = None
+                st.session_state.active_entity_name = ""
             st.success("Mandant gespeichert.")
             audit_log("save_mandant", f"Mandant gespeichert: {row['mandantenname']}", row["id"])
 
@@ -1710,28 +1733,52 @@ elif phase == "2 Mandanten":
         else:
             st.info("Noch keine Gesellschaft/Einheit vorhanden. Lege unten die erste Einheit an.")
 
+        if entities:
+            st.markdown("#### Angelegte Gesellschaften/Einheiten")
+            entity_overview = pd.DataFrame(
+                [
+                    {
+                        "Gesellschaft": e.get("name", ""),
+                        "Typ": e.get("entity_type", ""),
+                        "Übergeordnet": next((p.get("name", "") for p in entities if p.get("id") == e.get("parent_entity_id")), ""),
+                    }
+                    for e in entities
+                ]
+            )
+            st.dataframe(entity_overview, use_container_width=True, hide_index=True)
+
+        create_new_entity = st.checkbox("Neue Gesellschaft/Einheit hinzufügen", value=False)
+        entity_form_source = {} if create_new_entity else (st.session_state.active_entity or {})
+
         with st.form("entity_form"):
             ec1, ec2, ec3 = st.columns(3)
             with ec1:
-                entity_name = st.text_input("Name der Gesellschaft/Einheit", st.session_state.active_entity.get("name", mandant_display_name()))
+                entity_name = st.text_input("Name der Gesellschaft/Einheit", entity_form_source.get("name", ""))
             with ec2:
                 entity_type = st.selectbox(
                     "Typ",
                     ENTITY_TYPES,
-                    index=ENTITY_TYPES.index(st.session_state.active_entity.get("entity_type", ENTITY_TYPES[0])) if st.session_state.active_entity.get("entity_type") in ENTITY_TYPES else 0,
+                    index=ENTITY_TYPES.index(entity_form_source.get("entity_type", ENTITY_TYPES[0])) if entity_form_source.get("entity_type") in ENTITY_TYPES else 0,
                 )
             with ec3:
                 parent_options = {"Keine": None}
-                parent_options.update({e.get("name", e.get("id")): e.get("id") for e in entities if e.get("id") != st.session_state.active_entity_id})
+                edited_entity_id = entity_form_source.get("id")
+                parent_options.update({e.get("name", e.get("id")): e.get("id") for e in entities if e.get("id") != edited_entity_id})
                 parent_label = st.selectbox("Übergeordnete Einheit", list(parent_options.keys()), index=0)
-            save_entity = st.form_submit_button("Gesellschaft/Einheit speichern", use_container_width=True)
+            save_entity = st.form_submit_button(
+                "Gesellschaft/Einheit hinzufügen" if create_new_entity else "Gesellschaft/Einheit speichern",
+                use_container_width=True,
+            )
 
         if save_entity:
-            existing_entity = st.session_state.active_entity if st.session_state.active_entity_id else {}
+            existing_entity = {} if create_new_entity else (st.session_state.active_entity if st.session_state.active_entity_id else {})
+            if not entity_name.strip():
+                st.error("Bitte einen Namen für die Gesellschaft/Einheit eintragen.")
+                st.stop()
             row = {
                 "id": existing_entity.get("id") or new_id(),
                 "mandant_id": st.session_state.active_mandant_id,
-                "name": entity_name,
+                "name": entity_name.strip(),
                 "entity_type": entity_type,
                 "parent_entity_id": parent_options[parent_label],
                 "updated_at": now_iso(),
@@ -1745,8 +1792,9 @@ elif phase == "2 Mandanten":
                 st.session_state.active_entity = row
                 st.session_state.active_entity_id = row["id"]
                 st.session_state.active_entity_name = row["name"]
-                st.success("Gesellschaft/Einheit gespeichert.")
+                st.success("Gesellschaft/Einheit hinzugefügt." if create_new_entity else "Gesellschaft/Einheit gespeichert.")
                 audit_log("save_entity", f"Gesellschaft/Einheit gespeichert: {row['name']}", entity_id=row["id"])
+                st.rerun()
 
         st.markdown("### Übersichtsmatrix")
         matrix = mandant_matrix()
@@ -1755,10 +1803,36 @@ elif phase == "2 Mandanten":
         else:
             st.dataframe(matrix, use_container_width=True, hide_index=True)
 
+        st.markdown("### Gesellschaft/Einheit löschen")
+        active_entity_name = st.session_state.active_entity_name or ""
+        if active_entity_name:
+            entity_delete_confirm = st.text_input("Zum Löschen der aktiven Gesellschaft bitte Namen exakt eingeben", key="entity_delete_confirm")
+            if st.button("Aktive Gesellschaft/Einheit löschen", disabled=entity_delete_confirm != active_entity_name, use_container_width=True):
+                entity_id = st.session_state.active_entity_id
+                supabase_delete_where("mapping_assignments", {"entity_id": entity_id})
+                supabase_delete_where("onboarding_answers", {"entity_id": entity_id})
+                supabase_delete_where("ai_explanations", {"entity_id": entity_id})
+                supabase_delete_where("susa_uploads", {"entity_id": entity_id})
+                err = supabase_delete("entities", entity_id)
+                if err:
+                    st.error(err)
+                else:
+                    audit_log("delete_entity", f"Gesellschaft/Einheit gelöscht: {active_entity_name}", entity_id=entity_id)
+                    st.session_state.active_entity = {}
+                    st.session_state.active_entity_id = None
+                    st.session_state.active_entity_name = ""
+                    st.success("Gesellschaft/Einheit gelöscht.")
+                    st.rerun()
+        else:
+            st.info("Keine aktive Gesellschaft/Einheit ausgewählt.")
+
         st.markdown("### Löschen")
         delete_confirm = st.text_input("Zum Löschen des aktiven Mandanten bitte Mandantenname exakt eingeben")
         if st.button("Aktiven Mandanten löschen", disabled=delete_confirm != mandant_display_name()):
-            err = supabase_delete("mandants", st.session_state.active_mandant_id)
+            mandant_id = st.session_state.active_mandant_id
+            for table in ["mapping_assignments", "onboarding_answers", "ai_explanations", "susa_uploads", "entities", "reporting_profiles", "reporting_years", "mandant_years"]:
+                supabase_delete_where(table, {"mandant_id": mandant_id})
+            err = supabase_delete("mandants", mandant_id)
             if err:
                 st.error(err)
             else:
