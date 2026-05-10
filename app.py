@@ -184,7 +184,6 @@ elif phase == "6: Export & Versand":
     st.header("Phase 6: Finaler Export & Bericht")
     
     if 'susa_data' in st.session_state:
-        # 1. Daten vorbereiten
         df = st.session_state['susa_data'].copy()
         df.columns = [str(c).strip() for c in df.columns]
         ausweis_cols = [c for c in df.columns if 'ausweis' in c.lower()]
@@ -194,45 +193,52 @@ elif phase == "6: Export & Versand":
             # Aggregation (Ebene 1-5)
             export_df = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
             
-            st.success("Berichtsdaten bereit zum Download.")
-            
-            # --- EXCEL DOWNLOAD (Sehr stabil) ---
             import io
+            from openpyxl.styles import Font, Alignment, PatternFill
+            
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
                 export_df.to_excel(writer, index=False, sheet_name='LUMINA_Abschluss')
+                workbook = writer.book
+                worksheet = writer.sheets['LUMINA_Abschluss']
+                
+                # --- FORMATIERUNG ---
+                header_fill = PatternFill(start_color="CCE5FF", end_color="CCE5FF", fill_type="solid")
+                bold_font = Font(bold=True)
+                
+                # Header formatieren
+                for cell in worksheet[1]:
+                    cell.fill = header_fill
+                    cell.font = bold_font
+                
+                # Zeilenweise Formatierung für Hierarchie-Optik
+                for i, row in enumerate(export_df.values, start=2):
+                    # Beispiel: Wenn es eine Hauptgruppe (Ebene 1) ist, fett markieren
+                    if row[1] == "": # Falls Unterebenen leer sind
+                        worksheet[f'A{i}'].font = bold_font
+                    
+                    # Einrückung simulierten für Ebene 3, 4, 5
+                    worksheet[f'C{i}'].alignment = Alignment(indent=1)
+                    worksheet[f'D{i}'].alignment = Alignment(indent=2)
+                    worksheet[f'E{i}'].alignment = Alignment(indent=3)
+                
+                # Spaltenbreite anpassen
+                for column in worksheet.columns:
+                    max_length = max(len(str(cell.value)) for cell in column)
+                    worksheet.column_dimensions[column[0].column_letter].width = max_length + 2
+
+            st.success("Professioneller Excel-Bericht mit Hierarchie-Einrückung bereit.")
             
             st.download_button(
-                label="📥 Bilanz-Bericht (.xlsx) herunterladen",
+                label="📥 Strukturierten Excel-Bericht herunterladen",
                 data=buffer.getvalue(),
-                file_name="LUMINA_Bericht_2025.xlsx",
+                file_name="LUMINA_Profi_Bericht.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-
-            # --- PDF DOWNLOAD (Vereinfacht ohne Header-Klasse) ---
-            from fpdf import FPDF
-            if st.button("📄 PDF-Vorschau generieren"):
-                pdf = FPDF()
-                pdf.add_page()
-                pdf.set_font("Arial", "B", 14)
-                pdf.cell(0, 10, "LUMINA Abschlussbericht 2025", ln=True, align='C')
-                pdf.set_font("Arial", size=8)
-                pdf.ln(5)
-                
-                for _, row in export_df.head(50).iterrows():
-                    txt = f"{row.iloc} > {row.iloc} | {row[wert_cols[-1]]:,.2f} EUR"
-                    pdf.cell(0, 7, txt.encode('latin-1', 'replace').decode('latin-1'), border=1, ln=True)
-                
-                st.download_button(
-                    label="Klicken zum PDF-Download",
-                    data=bytes(pdf.output()),
-                    file_name="LUMINA_Protokoll.pdf",
-                    mime="application/pdf"
-                )
-            
             st.balloons()
     else:
         st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
+
 
 
 
