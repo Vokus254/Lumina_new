@@ -341,8 +341,27 @@ def load_mapping_from_supabase():
     if sb is None:
         return None, "Supabase ist nicht verbunden. Prüfe Streamlit Secrets."
     try:
-        res = sb.table("master_mapping").select("*").execute()
-        df = pd.DataFrame(res.data)
+        rows = []
+        page_size = 1000
+        start = 0
+
+        while True:
+            end = start + page_size - 1
+            res = (
+                sb.table("master_mapping")
+                .select("*")
+                .order("konto_nr")
+                .range(start, end)
+                .execute()
+            )
+            batch = res.data or []
+            rows.extend(batch)
+
+            if len(batch) < page_size:
+                break
+            start += page_size
+
+        df = pd.DataFrame(rows)
         if df.empty:
             return None, "Tabelle master_mapping ist leer."
         df = df.rename(columns={"konto_nr": "KontoNr"})
