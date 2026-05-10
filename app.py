@@ -89,35 +89,36 @@ elif phase == "4: Prüfen & Optimieren":
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data']
         
-        # 1. Dynamische Suche nach der Mapping-Spalte
-        # Wir suchen die erste Spalte, die 'Ausweis' im Namen hat
+        # 1. Mapping-Spalte finden
         ausweis_cols = [c for c in df.columns if 'Ausweis' in str(c)]
+        # 2. Konto-Bezeichnung finden
+        bez_col = next((c for c in df.columns if 'bezeichnung' in str(c).lower()), None)
+        # 3. Saldo-Spalte finden
+        saldo_col = next((c for c in df.columns if any(x in str(c) for x in ['2025', 'Saldo', '31.12'])), None)
         
         if ausweis_cols:
             main_ausweis = ausweis_cols[0]
-            # Wir suchen Konten, die dort "Nicht zugeordnet" sind (oder leer/NaN)
             luecken = df[df[main_ausweis].fillna("Nicht zugeordnet") == "Nicht zugeordnet"].copy()
             
-            # Saldo-Spalte finden
-            saldo_col = next((c for c in df.columns if any(x in str(c) for x in ['2025', 'Saldo', '31.12'])), None)
-            
             if not luecken.empty and saldo_col:
-                # Nur relevante Konten (Saldo != 0)
                 luecken_relevant = luecken[luecken[saldo_col].fillna(0) != 0]
                 
                 if not luecken_relevant.empty:
                     st.error(f"Kritisch: {len(luecken_relevant)} Konten mit Salden ohne Zuordnung gefunden!")
-                    st.dataframe(luecken_relevant[['KontoNr', 'Kontobezeichnung', saldo_col]], hide_index=True)
+                    
+                    # Nur Spalten anzeigen, die auch wirklich existieren
+                    show_cols = [c for c in ['KontoNr', bez_col, saldo_col] if c is not None]
+                    st.dataframe(luecken_relevant[show_cols], hide_index=True)
                 else:
                     st.success("✅ Alle Konten mit Salden sind im Master-Mapping erfasst.")
             else:
                 st.success("✅ Vollständiges Mapping erkannt.")
         else:
-            st.warning("Keine 'Ausweis'-Spalten im Datensatz gefunden. Bitte prüfen Sie die Spaltennamen in Ihrem Master-Mapping.")
-            st.write("Verfügbare Spalten:", list(df.columns))
+            st.warning("Keine 'Ausweis'-Spalten gefunden. Bitte Master-Mapping prüfen.")
             
     else:
         st.warning("Bitte laden Sie in Phase 3 die Dateien hoch.")
+
 
 
 elif phase == "5: Abschluss prüfen":
