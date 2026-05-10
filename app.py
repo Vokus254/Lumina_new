@@ -174,24 +174,44 @@ elif phase == "6: Export & Versand":
         df = st.session_state['susa_data'].copy()
         df.columns = [str(c) for c in df.columns]
         
-        # 1. Spalten identifizieren (Aktuell & Vorjahr)
-        # Wir suchen Spalten, die ein Datum oder 'Saldo' enthalten
+        # 1. Wert-Spalten identifizieren
         wert_cols = [c for c in df.columns if any(x in c for x in ['2025', '2024', 'Saldo', '31.12'])]
         ausweis_cols = [c for c in df.columns if 'Ausweis' in c]
         
-        # 2. ZAHLEN SÄUBERN (WICHTIG!)
-        # Entfernt '€', Leerzeichen etc. und macht echte Zahlen daraus
-        for col in wert_cols:
-            df[col] = pd.to_numeric(df[col].astype(str).str.replace('€', '').str.replace('.', '').str.replace(',', '.').str.strip(), errors='coerce').fillna(0)
+        # 2. ROBUSTE ZAHLEN-KONVERTIERUNG
+        def clean_currency(value):
+            if pd.isna(value) or str(value).strip() == "":
+                return 0.0
+            s = str(value).replace('€', '').strip()
+            # Wenn ein Punkt UND ein Komma da sind (1.234,50) -> Punkt weg, Komma zu Punkt
+            if '.' in s and ',' in s:
+                s = s.replace('.', '').replace(',', '.')
+            # Wenn nur ein Komma da ist (1234,50) -> Komma zu Punkt
+            elif ',' in s:
+                s = s.replace(',', '.')
+            # Punkt als Tausendertrenner entfernen (z.B. 1.234)
+            elif '.' in s and len(s.split('.')[-1]) != 2:
+                s = s.replace('.', '')
+            try:
+                return float(s)
+            except:
+                return 0.0
 
-        gemappt = df[df[ausweis_cols].fillna("Nicht zugeordnet") != "Nicht zugeordnet"].copy()
+        for col in wert_cols:
+            df[col] = df[col].apply(clean_currency)
+
+        gemappt = df[df[ausweis_cols[0]].fillna("Nicht zugeordnet") != "Nicht zugeordnet"].copy()
 
         if not gemappt.empty:
-            # 3. Aggregieren (Summieren) über alle Wertspalten
+            # 3. Aggregieren
             export_df = gemappt.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
             
             st.subheader("Vorschau Export-Daten")
-            st.dataframe(export_df.head(10))
+            st.dataframe(
+                export_df, 
+                column_config={c: st.column_config.NumberColumn(format="%.2f €") for c in wert_cols},
+                hide_index=True
+            )
 
             # --- EXCEL EXPORT ---
             import io
@@ -206,8 +226,9 @@ elif phase == "6: Export & Versand":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-            st.success(f"Bericht erstellt. Es wurden {len(wert_cols)} Wertspalten (inkl. Vorjahr) erkannt.")
             st.balloons()
+        else:
+            st.error("Keine gemappten Daten für den Export gefunden.")
     else:
         st.warning("Bitte laden Sie in Phase 3 die Dateien hoch.")
 
