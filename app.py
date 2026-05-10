@@ -33,17 +33,29 @@ elif phase == "2: Unternehmen verstehen":
     st.write("LUMINA ermittelt nun Ihre Berichtspflichten gemäß HGB.")
 
 elif phase == "3: Zahlen hochladen (SuSa)":
-    st.header("Phase 3: Datenbasis (SuSa)")
-    uploaded_file = st.file_uploader("Summen-Salden-Liste hochladen", type=["xlsx"])
+    st.header("Phase 3: KI-Mapping")
+    from mapping import get_hgb_mapping
+    
+    uploaded_file = st.file_uploader("SuSa-Excel hochladen", type=["xlsx"])
     
     if uploaded_file:
         import pandas as pd
-        # Daten einlesen (wir springen die ersten Zeilen Header ggf. mit skiprows=1 an, falls nötig)
         df = pd.read_excel(uploaded_file)
-        # Speichern für Phase 4
+        mapping_tabelle = get_hgb_mapping("SKR03")
+        
+        # Die Magie: Wir ordnen jedem Konto die HGB-Position zu
+        # Wir nehmen an, die Spalte heißt 'KontoNr' (wie in deinem Screenshot)
+        df['HGB_Position'] = df['KontoNr'].astype(str).map(mapping_tabelle)
+        
         st.session_state['susa_data'] = df
-        st.success("Daten im System gespeichert!")
-        st.dataframe(df.head(10))
+        st.success("Mapping abgeschlossen!")
+        
+        # Zeige nur die Konten, die wir erkannt haben
+        erkannt = df[df['HGB_Position'].notna()]
+        st.dataframe(erkannt[['KontoNr', 'Kontobezeichnung', 'HGB_Position']])
+        
+        st.info(f"LUMINA hat {len(erkannt)} Konten automatisch den HGB-Posten zugeordnet.")
+
 
 elif phase == "4: Prüfen & Optimieren":
     st.header("Phase 4: Das Herzstück")
