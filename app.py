@@ -41,22 +41,34 @@ elif phase == "3: Zahlen hochladen (SuSa)":
     st.header("Phase 3: Master-Mapping & SuSa")
     col1, col2 = st.columns(2)
     with col1:
-        map_file = st.file_uploader("Master-Mapping Excel", type=["xlsx"])
+        map_file = st.file_uploader("Master-Mapping Excel", type=["xlsx"], key="map")
     with col2:
-        susa_file = st.file_uploader("Mandanten-SuSa Excel", type=["xlsx"])
+        susa_file = st.file_uploader("Mandanten-SuSa Excel", type=["xlsx"], key="susa")
 
     if map_file and susa_file:
+        # 1. Master-Mapping einlesen
         df_map = pd.read_excel(map_file)
-        df_susa = pd.read_excel(susa_file, header=1)
+        # 2. SuSa einlesen (wir suchen die Header-Zeile automatisch)
+        df_susa_raw = pd.read_excel(susa_file, header=None)
+        header_idx = 0
+        for i, row in df_susa_raw.head(10).iterrows():
+            if row.astype(str).str.contains('Konto', case=False).any():
+                header_idx = i
+                break
+        df_susa = pd.read_excel(susa_file, header=header_idx)
         
-        # Spalten suchen
+        # 3. Spalten-Identifikation
         k_map = next((c for c in df_map.columns if 'konto' in str(c).lower()), None)
         k_susa = next((c for c in df_susa.columns if 'konto' in str(c).lower()), None)
         
         if k_map and k_susa:
-            df_map[k_map] = df_map[k_map].astype(str).str.strip()
-            df_susa[k_susa] = df_susa[k_susa].astype(float).astype(int).astype(str).str.strip()
+            st.info(f"Verknüpfung: Master({k_map}) ↔ SuSa({k_susa})")
             
+            # Harmonisierung der Kontonummern
+            df_map[k_map] = df_map[k_map].astype(str).str.strip().str.replace('.0', '', regex=False)
+            df_susa[k_susa] = df_susa[k_susa].astype(str).str.strip().str.replace('.0', '', regex=False)
+            
+            # Merge / Join
             df_final = pd.merge(df_susa, df_map, left_on=k_susa, right_on=k_map, how='left')
             
             # Zahlen reinigen
@@ -65,8 +77,10 @@ elif phase == "3: Zahlen hochladen (SuSa)":
                 df_final[c] = df_final[c].apply(clean_currency)
             
             st.session_state['susa_data'] = df_final
-            st.success("Mapping & Datenreinigung erfolgreich!")
+            st.success(f"Mapping erfolgreich! {len(df_final)} Zeilen verarbeitet.")
             st.dataframe(df_final.head(10))
+        else:
+            st.error(f"Spalten nicht gefunden! Master-Spalten: {list(df_map.columns)} | SuSa-Spalten: {list(df_susa.columns)}")
 
 elif phase == "4: Prüfen & Optimieren":
     st.header("Phase 4: Lücken-Analyse")
