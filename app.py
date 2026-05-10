@@ -109,8 +109,18 @@ elif phase == "3: Zahlen hochladen (SuSa)":
                         st.warning("Kein Mapping in der Cloud gefunden. Bitte Excel hochladen.")
 
             # --- VERARBEITUNG ---
-            if 'df_map' in locals():
+                       # --- VERARBEITUNG (ROBUSTER JOIN) ---
+            if 'df_map' in locals() and k_susa in df_map.columns:
+                # Sicherstellen, dass beide Kontospalten den gleichen Typ haben (String)
+                df_susa[k_susa] = df_susa[k_susa].astype(str).str.strip()
+                df_map[k_susa] = df_map[k_susa].astype(str).str.strip()
+                
                 df_final = pd.merge(df_susa, df_map, on=k_susa, how='left')
+                
+                # ... (Rest des Codes wie bisher)
+            else:
+                st.error("Fehler: Die Kontospalte wurde im Mapping-File nicht gefunden. Bitte Upload-Reihenfolge prüfen!")
+
                 
                 # Klärungsposten-Logik
                 ausweis_cols = [c for c in df_final.columns if 'Ausweis' in str(c)]
