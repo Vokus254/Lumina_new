@@ -62,77 +62,70 @@ elif phase == "2: Unternehmen verstehen":
 
 elif phase == "3: Zahlen hochladen (SuSa)":
     st.header("Phase 3: Master-Mapping & SuSa")
-    
     col1, col2 = st.columns(2)
+    
     with col1:
         map_file = st.file_uploader("1. Master-Mapping Excel (Optional)", type=["xlsx"])
         if st.button("Mapping aus Cloud laden ☁️"):
-            with st.spinner("Lade Daten aus Supabase..."):
+            with st.spinner("Lade Daten..."):
                 res = supabase.table("master_mapping").select("*").execute()
-                if res.data:
-                    df_cloud = pd.DataFrame(res.data)
-                    # Spaltennamen harmonisieren (DB-Klein zu App-Groß)
+                df_cloud = pd.DataFrame(res.data)
+                if not df_cloud.empty:
+                    # Spaltennamen für die App harmonisieren
                     df_cloud = df_cloud.rename(columns={'konto_nr': 'KontoNr'})
                     for i in range(1, 8):
                         df_cloud = df_cloud.rename(columns={f'ausweis_{i}': f'Ausweis_{i}'})
                     st.session_state['master_map'] = df_cloud
-                    st.success(f"{len(df_cloud)} Konten aus der Cloud geladen!")
-                else:
-                    st.warning("Keine Daten in der Cloud.")
+                    st.success(f"{len(df_cloud)} Konten geladen!")
 
     with col2:
         susa_file = st.file_uploader("2. Mandanten-SuSa Excel", type=["xlsx"])
 
-    # LOGIK: Welches Mapping nehmen wir?
-    if map_file:
-        df_map = get_clean_df(map_file)
-        st.session_state['master_map'] = df_map
-        st.info("Nutze hochgeladenes Excel-Mapping.")
-
-    if susa_file and 'master_map' in st.session_state:
+    if susa_file:
         df_susa = get_clean_df(susa_file)
-        df_map = st.session_state['master_map']
-        
-        # Kontonummern für den Join vorbereiten
         k_susa = next((c for c in df_susa.columns if 'konto' in str(c).lower()), None)
-        df_susa[k_susa] = df_susa[k_susa].astype(str).str.strip().str.replace('.0', '', regex=False)
-        df_map['KontoNr'] = df_map['KontoNr'].astype(str).str.strip().str.replace('.0', '', regex=False)
         
-        # VERKNÜPFUNG
-        df_final = pd.merge(df_susa, df_map, left_on=k_susa, right_on='KontoNr', how='left')
-        
-        # Reinigung & Klärungsposten
-        ausweis_cols = [c for c in df_final.columns if 'Ausweis' in str(c)]
-        for col in ausweis_cols:
-            df_final[col] = df_final[col].fillna("9. KLÄRUNGSPOSTEN (Mapping fehlt)")
-        
-        wert_cols = [c for c in df_final.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
-        for c in wert_cols:
-            df_final[c] = df_final[c].apply(clean_currency)
-        
-        st.session_state['susa_data'] = df_final
-        st.success("Daten verarbeitet!")
-        st.dataframe(df_final.head(10))
-
-        # SPEICHER-OPTION
-                       if st.button("Dieses Mapping dauerhaft in Cloud sichern"):
+        if k_susa:
+            # Kontonummern in SuSa säubern
+            df_susa[k_susa] = df_susa[k_susa].astype(str).str.strip().str.replace('.0', '', regex=False)
+            
+            # Falls ein neues Excel hochgeladen wurde, dieses priorisieren
+            if map_file:
+                df_map_new = get_clean_df(map_file)
+                st.session_state['master_map'] = df_map_new
+                st.info("Nutze hochgeladenes Excel-Mapping.")
+                
+                if st.button("Dieses Mapping in Cloud sichern"):
                     with st.spinner("Synchronisiere mit Supabase..."):
-                        # Spaltennamen säubern
-                        df_map.columns = [str(c).strip() for c in df_map.columns]
-                        k_map = next((c for c in df_map.columns if 'konto' in str(c).lower()), df_map.columns[0])
-                        
-                        for _, row in df_map.iterrows():
-                            # WICHTIG: .iloc[0] oder der Spaltenname k_map greift den ECHTEN Wert
-                            m_data = {"konto_nr": str(row[k_map]).strip().replace('.0', '')}
+                        for _, row in df_map_new.iterrows():
+                            # Fix: .iloc[0] greift den echten Wert der ersten Spalte
+                            m_data = {"konto_nr": str(row.iloc[0]).strip().replace('.0', '')}
                             for i in range(1, 8):
                                 m_data[f"ausweis_{i}"] = str(row.get(f"Ausweis_{i}", "Nicht zugeordnet"))
-                            
-                            try:
-                                supabase.table("master_mapping").upsert(m_data).execute()
-                            except Exception as e:
-                                st.error(f"Fehler bei Zeile: {e}")
-                        st.success("Mapping mit echten Kontonummern gespeichert!")
-                        st.rerun()
+                            supabase.table("master_mapping").upsert(m_data).execute()
+                        st.success("Cloud-Speicher mit echten Kontonummern aktualisiert!")
+            
+            # Verknüpfung durchführen, wenn ein Mapping vorhanden ist
+            if 'master_map' in st.session_state:
+                df_map = st.session_state['master_map']
+                # Join-Spalte in Mapping-Tabelle vorbereiten
+                df_map['KontoNr'] = df_map['KontoNr'].astype(str).str.strip().str.replace('.0', '', regex=False)
+                
+                df_final = pd.merge(df_susa, df_map, left_on=k_susa, right_on='KontoNr', how='left')
+                
+                # Klärungsposten & Reinigung
+                ausweis_cols = [c for c in df_final.columns if 'Ausweis' in str(c)]
+                for col in ausweis_cols:
+                    df_final[col] = df_final[col].fillna("9. KLÄRUNGSPOSTEN")
+                
+                wert_cols = [c for c in df_final.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
+                for c in wert_cols:
+                    df_final[c] = df_final[c].apply(clean_currency)
+                
+                st.session_state['susa_data'] = df_final
+                st.success("Daten erfolgreich verknüpft!")
+                st.dataframe(df_final.head(10))
+
 
 
 
