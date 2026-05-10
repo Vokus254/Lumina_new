@@ -87,46 +87,46 @@ elif phase == "4: Prüfen & Optimieren":
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data']
         
-        # Mapping-Ebenen finden
+        # 1. Spalten finden (egal wie sie heißen)
+        k_col = next((c for c in df.columns if 'konto' in str(c).lower()), None)
+        b_col = next((c for c in df.columns if 'bezeich' in str(c).lower()), None)
         ausweis_cols = [c for c in df.columns if 'ausweis' in str(c).lower()]
-        a1_col = ausweis_cols if ausweis_cols else None
         
-        if a1_col:
-            # 1. Lücken identifizieren
-            luecken = df[df[a1_col].isna() | (df[a1_col] == "Nicht zugeordnet")].copy()
+        if ausweis_cols and k_col:
+            # Lücken finden: Wo ist die erste Ausweis-Ebene leer?
+            luecken = df[df[ausweis_cols[0]].isna() | (df[ausweis_cols[0]] == "Nicht zugeordnet")].copy()
             
             if not luecken.empty:
                 st.error(f"Gefunden: {len(luecken)} Konten ohne Zuordnung.")
                 
-                # 2. DAS MASSEN-TOOL
+                # --- QUICK-FIX TOOL ---
                 st.subheader("⚡ Quick-Fix: Massen-Zuweisung")
-                col1, col2, col3 = st.columns([1, 2, 1])
+                c1, c2, c3 = st.columns([1, 2, 1])
                 
-                with col1:
-                    prefix = st.text_input("Konten-Präfix (z.B. 211)", help="Alle Konten, die hiermit beginnen, werden gemappt.")
-                with col2:
-                    target_pos = st.selectbox("Ziel-Position (Ebene 4):", 
-                                            ["Sonderposten (SOPO)", "Eigenkapital", "Verbindlichkeiten", "Umlaufvermögen"])
-                with col3:
-                    st.write(" ") # Platzhalter
-                    if st.button("Zuweisung ausführen"):
-                        # Logik: Suche alle Konten mit dem Präfix und setze den Wert
-                        mask = df['KontoNr'].str.startswith(prefix)
-                        df.loc[mask, a1_col] = "Bilanz" # Beispiel Ebene 1
-                        df.loc[mask, ausweis_cols] = "Passiva" # Beispiel Ebene 2
-                        df.loc[mask, ausweis_cols] = target_pos # Beispiel Ebene 4
-                        
-                        st.session_state['susa_data'] = df
-                        st.success(f"Erfolg! Konten mit Präfix '{prefix}' wurden zugewiesen.")
-                        st.rerun()
+                prefix = c1.text_input("Konten-Präfix (z.B. 211)")
+                target_pos = c2.selectbox("Ziel-Position (Ebene 4):", 
+                                        ["Sonderposten (SOPO)", "Eigenkapital", "Verbindlichkeiten", "Umlaufvermögen", "Sachanlagen"])
+                
+                if c3.button("Zuweisen") and prefix:
+                    # Filter: Alle Konten die mit dem Präfix starten
+                    mask = df[k_col].astype(str).str.startswith(prefix)
+                    # Wir füllen alle 7 Ebenen mit sinnvollen Standardwerten für den Bereich
+                    df.loc[mask, ausweis_cols[0]] = "Bilanz"
+                    df.loc[mask, ausweis_cols[3]] = target_pos # Ebene 4
+                    
+                    st.session_state['susa_data'] = df
+                    st.success(f"Zuweisung für {prefix}* abgeschlossen!")
+                    st.rerun()
 
                 st.divider()
-                # 3. Anzeige der restlichen Lücken
-                st.dataframe(luecken[['KontoNr', 'Kontobezeichnung_x']], hide_index=True)
+                # Tabelle anzeigen (nur vorhandene Spalten nutzen)
+                show_cols = [c for c in [k_col, b_col] if c is not None]
+                st.dataframe(luecken[show_cols].head(100), hide_index=True)
             else:
                 st.success("✅ Alle Konten sind erfolgreich gemappt.")
     else:
         st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
+
 
 
 
