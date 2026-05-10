@@ -34,6 +34,8 @@ Die Datei `supabase_mandant_management.sql` legt die Tabellen für Mandanten, Ab
 
 Die App bleibt lauffähig, wenn diese Tabellen noch fehlen. In diesem Fall zeigt sie eine verständliche Supabase-Meldung und der bisherige Upload-/Mapping-Workflow bleibt nutzbar.
 
+Wenn Supabase meldet, dass Row Level Security den Zugriff blockiert, führe zusätzlich `supabase_rls_policies.sql` aus. Das Skript legt einfache App-Policies an. Für produktive Multi-User-Setups sollten diese Policies später mandanten- und benutzerspezifisch gehärtet werden.
+
 Neue Navigation:
 
 1. Willkommen

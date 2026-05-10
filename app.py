@@ -1093,6 +1093,13 @@ def table_missing_message(table_name: str) -> str:
     return f"Supabase-Tabelle '{table_name}' ist nicht verfügbar. Bitte SQL-Migration ausführen."
 
 
+def supabase_error_message(table_name: str, error: Exception) -> str:
+    text = str(error)
+    if "row-level security" in text.lower() or "42501" in text:
+        return f"Supabase-RLS blockiert '{table_name}'. Bitte RLS-Policies für App-Zugriff anlegen oder Service-Key verwenden. Details: {error}"
+    return f"{table_missing_message(table_name)} Details: {error}"
+
+
 def supabase_select(table_name: str, filters: dict | None = None, order: str | None = None) -> tuple[list[dict], str | None]:
     sb = get_supabase_client()
     if sb is None:
@@ -1106,7 +1113,7 @@ def supabase_select(table_name: str, filters: dict | None = None, order: str | N
         res = query.execute()
         return res.data or [], None
     except Exception as e:
-        return [], f"{table_missing_message(table_name)} Details: {e}"
+        return [], supabase_error_message(table_name, e)
 
 
 def supabase_upsert(table_name: str, rows, on_conflict: str = "id") -> str | None:
@@ -1117,7 +1124,7 @@ def supabase_upsert(table_name: str, rows, on_conflict: str = "id") -> str | Non
         sb.table(table_name).upsert(rows, on_conflict=on_conflict).execute()
         return None
     except Exception as e:
-        return f"{table_missing_message(table_name)} Details: {e}"
+        return supabase_error_message(table_name, e)
 
 
 def supabase_delete(table_name: str, row_id: str) -> str | None:
@@ -1128,7 +1135,7 @@ def supabase_delete(table_name: str, row_id: str) -> str | None:
         sb.table(table_name).delete().eq("id", row_id).execute()
         return None
     except Exception as e:
-        return f"{table_missing_message(table_name)} Details: {e}"
+        return supabase_error_message(table_name, e)
 
 
 def audit_log(action: str, description: str, mandant_id: str | None = None, year_id: str | None = None):
