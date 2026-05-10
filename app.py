@@ -438,6 +438,135 @@ def build_pivot(df: pd.DataFrame, group_level: int, value_cols: list[str]) -> pd
     return df.groupby(ausweis_cols, dropna=False)[value_cols].sum().reset_index()
 
 
+def analysis_columns(value_cols: list[str]) -> tuple[str | None, str | None]:
+    if not value_cols:
+        return None, None
+    current_col = value_cols[0]
+    prior_col = value_cols[1] if len(value_cols) > 1 else None
+    return current_col, prior_col
+
+
+def add_variance_columns(df: pd.DataFrame, current_col: str, prior_col: str | None) -> pd.DataFrame:
+    out = df.copy()
+    out["Laufendes Jahr"] = out[current_col]
+    out["Vorjahr"] = out[prior_col] if prior_col else 0.0
+    out["Veränderung"] = out["Laufendes Jahr"] - out["Vorjahr"]
+    out["Veränderung_abs"] = out["Veränderung"].abs()
+    out["Veränderung_%"] = out.apply(
+        lambda r: (r["Veränderung"] / abs(r["Vorjahr"]) * 100) if r["Vorjahr"] else pd.NA,
+        axis=1,
+    )
+    return out
+
+
+def grouped_variance(df: pd.DataFrame, group_cols: list[str], current_col: str, prior_col: str | None) -> pd.DataFrame:
+    usable_group_cols = [c for c in group_cols if c in df.columns]
+    if not usable_group_cols:
+        return pd.DataFrame()
+    work = df.copy()
+    if prior_col is None:
+        work["__prior"] = 0.0
+        prior_col = "__prior"
+
+    grouped = work.groupby(usable_group_cols, dropna=False)[[current_col, prior_col]].sum().reset_index()
+    grouped = grouped.rename(columns={current_col: "Laufendes Jahr", prior_col: "Vorjahr"})
+    grouped["Veränderung"] = grouped["Laufendes Jahr"] - grouped["Vorjahr"]
+    grouped["Veränderung_abs"] = grouped["Veränderung"].abs()
+    grouped["Veränderung_%"] = grouped.apply(
+        lambda r: (r["Veränderung"] / abs(r["Vorjahr"]) * 100) if r["Vorjahr"] else pd.NA,
+        axis=1,
+    )
+    return grouped.sort_values("Veränderung_abs", ascending=False)
+
+
+def format_percent(value) -> str:
+    if pd.isna(value):
+        return "n/a"
+    return f"{float(value):,.1f} %".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def variance_display(df: pd.DataFrame):
+    display_cols = [c for c in df.columns if c != "Veränderung_abs"]
+    formatters = {
+        "Laufendes Jahr": format_de_number,
+        "Vorjahr": format_de_number,
+        "Veränderung": format_de_number,
+        "Veränderung_%": format_percent,
+    }
+    return df[display_cols].style.format({k: v for k, v in formatters.items() if k in df.columns})
+
+
+def interpretation_markdown(
+    df: pd.DataFrame,
+    value_cols: list[str],
+    mandant: str,
+    abschlussjahr: int,
+    threshold: float,
+    top_n: int,
+) -> str:
+    current_col, prior_col = analysis_columns(value_cols)
+    if current_col is None:
+        return "Keine Wertspalten gefunden."
+
+    work = add_variance_columns(df, current_col, prior_col)
+    level_summary = grouped_variance(df, ["Ausweis_1", "Ausweis_2", "Ausweis_3"], current_col, prior_col).head(top_n)
+    account_cols = ["KontoNr", "Kontobezeichnung", "Ausweis_1", "Ausweis_2", "Ausweis_3"]
+    account_cols = [c for c in account_cols if c in work.columns]
+    top_accounts = work[work["Veränderung_abs"] >= threshold].sort_values("Veränderung_abs", ascending=False).head(top_n)
+
+    lines = [
+        f"# KI-Arbeitsgrundlage für {mandant} {abschlussjahr}",
+        "",
+        "## Kontext",
+        f"- Abschlussjahr: {abschlussjahr}",
+        f"- Laufendes Jahr: {current_col}",
+        f"- Vorjahr: {prior_col or 'nicht vorhanden'}",
+        f"- Wesentlichkeitsschwelle für Auffälligkeiten: {format_de_amount(threshold, 'EUR')}",
+        "",
+        "## Auffällige Abschlusspositionen",
+    ]
+
+    if level_summary.empty:
+        lines.append("- Keine aggregierten Positionen auswertbar.")
+    else:
+        for _, row in level_summary.iterrows():
+            label = " / ".join(str(row.get(c, "")).strip() for c in ["Ausweis_1", "Ausweis_2", "Ausweis_3"] if c in row and str(row.get(c, "")).strip())
+            lines.append(
+                f"- {label}: laufendes Jahr {format_de_amount(row['Laufendes Jahr'], 'EUR')}, "
+                f"Vorjahr {format_de_amount(row['Vorjahr'], 'EUR')}, "
+                f"Veränderung {format_de_amount(row['Veränderung'], 'EUR')} ({format_percent(row['Veränderung_%'])})."
+            )
+
+    lines.extend(["", "## Größte Kontentreiber"])
+    if top_accounts.empty:
+        lines.append("- Keine Konten oberhalb der Schwelle.")
+    else:
+        for _, row in top_accounts.iterrows():
+            label = " / ".join(str(row.get(c, "")).strip() for c in account_cols if c not in ["KontoNr", "Kontobezeichnung"] and str(row.get(c, "")).strip())
+            lines.append(
+                f"- Konto {row.get('KontoNr', '')} {row.get('Kontobezeichnung', '')} ({label}): "
+                f"laufendes Jahr {format_de_amount(row['Laufendes Jahr'], 'EUR')}, "
+                f"Vorjahr {format_de_amount(row['Vorjahr'], 'EUR')}, "
+                f"Veränderung {format_de_amount(row['Veränderung'], 'EUR')} ({format_percent(row['Veränderung_%'])})."
+            )
+
+    lines.extend(
+        [
+            "",
+            "## Auftrag an die KI",
+            "Bitte interpretiere die Entwicklung fachlich vorsichtig und prüferfreundlich.",
+            "Erstelle getrennte Abschnitte für:",
+            "1. Management-Reporting mit Kernaussagen und Treibern.",
+            "2. Anhang-Hinweise mit möglichen erläuterungsbedürftigen Positionen.",
+            "3. Lagebericht-Hinweise zu Vermögens-, Finanz- und Ertragslage.",
+            "4. Rückfragen an das Rechnungswesen, falls Zahlen ohne weitere Informationen nicht belastbar interpretierbar sind.",
+            "",
+            "Wichtig: Keine Tatsachen erfinden. Formuliere Hypothesen als prüfbedürftig, wenn kein Sachverhalt geliefert wurde.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _tree_amount_cells(row: pd.Series, value_cols: list[str]) -> str:
     return "".join(
         f"<span class='amount'>{format_de_number(row.get(c, 0))}</span>"
@@ -768,7 +897,8 @@ phase = st.sidebar.radio(
         "3 Upload & Mapping",
         "4 Prüfen",
         "5 Abschlussansicht",
-        "6 Export",
+        "6 Interpretation",
+        "7 Export",
     ],
 )
 
@@ -1095,7 +1225,77 @@ elif phase == "5 Abschlussansicht":
 # ------------------------------------------------------------
 # Phase 6
 # ------------------------------------------------------------
-elif phase == "6 Export":
+elif phase == "6 Interpretation":
+    st.subheader("KI-gestützte Interpretation")
+
+    if st.session_state.mapped is None:
+        st.warning("Bitte zuerst in Phase 3 das Mapping starten.")
+    else:
+        df = st.session_state.mapped.copy()
+        value_cols = st.session_state.meta.get("value_cols", detect_value_cols(df))
+        current_col, prior_col = analysis_columns(value_cols)
+
+        if current_col is None:
+            st.error("Keine Wertspalten gefunden.")
+        else:
+            control_1, control_2 = st.columns(2)
+            with control_1:
+                threshold = st.number_input(
+                    "Wesentlichkeitsschwelle EUR",
+                    min_value=0.0,
+                    value=10000.0,
+                    step=1000.0,
+                )
+            with control_2:
+                top_n = st.slider("Anzahl Treiber", min_value=5, max_value=30, value=10)
+
+            st.caption(f"Vergleich: {current_col} gegen {prior_col or 'kein Vorjahr'}")
+
+            level_summary = grouped_variance(df, ["Ausweis_1", "Ausweis_2", "Ausweis_3"], current_col, prior_col).head(top_n)
+            account_work = add_variance_columns(df, current_col, prior_col)
+            top_accounts = account_work[account_work["Veränderung_abs"] >= threshold].sort_values("Veränderung_abs", ascending=False).head(top_n)
+
+            summary_tab, account_tab, prompt_tab = st.tabs(["Auffälligkeiten", "Kontentreiber", "KI-Arbeitsgrundlage"])
+
+            with summary_tab:
+                st.markdown("### Auffällige Abschlusspositionen")
+                if level_summary.empty:
+                    st.info("Keine auswertbaren Abschlusspositionen gefunden.")
+                else:
+                    st.dataframe(variance_display(level_summary), use_container_width=True, hide_index=True)
+
+            with account_tab:
+                st.markdown("### Größte Kontentreiber")
+                display_cols = ["KontoNr", "Kontobezeichnung", "Ausweis_1", "Ausweis_2", "Ausweis_3", "Laufendes Jahr", "Vorjahr", "Veränderung", "Veränderung_%"]
+                display_cols = [c for c in display_cols if c in top_accounts.columns]
+                if top_accounts.empty:
+                    st.info("Keine Konten oberhalb der Schwelle.")
+                else:
+                    st.dataframe(variance_display(top_accounts[display_cols + ["Veränderung_abs"]]), use_container_width=True, hide_index=True)
+
+            with prompt_tab:
+                markdown = interpretation_markdown(
+                    df,
+                    value_cols,
+                    st.session_state.mandant,
+                    int(st.session_state.abschlussjahr),
+                    threshold,
+                    top_n,
+                )
+                st.text_area("Prompt für KI-Interpretation", markdown, height=420)
+                st.download_button(
+                    "KI-Arbeitsgrundlage herunterladen",
+                    data=markdown.encode("utf-8"),
+                    file_name=f"Lumina_KI_Arbeitsgrundlage_{st.session_state.abschlussjahr}.md",
+                    mime="text/markdown",
+                    use_container_width=True,
+                )
+
+
+# ------------------------------------------------------------
+# Phase 7
+# ------------------------------------------------------------
+elif phase == "7 Export":
     st.subheader("Export & Prüfungspaket")
 
     if st.session_state.mapped is None:
