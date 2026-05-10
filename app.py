@@ -115,14 +115,25 @@ elif phase == "3: Zahlen hochladen (SuSa)":
         st.dataframe(df_final.head(10))
 
         # SPEICHER-OPTION
-        if st.button("Diesen Stand als neue Cloud-Version sichern"):
-            with st.spinner("Synchronisiere..."):
-                for _, row in df_map.iterrows():
-                    m_data = {"konto_nr": str(row['KontoNr'])}
-                    for i in range(1, 8):
-                        m_data[f"ausweis_{i}"] = str(row.get(f"Ausweis_{i}", "Nicht zugeordnet"))
-                    supabase.table("master_mapping").upsert(m_data).execute()
-                st.success("Cloud-Version aktualisiert!")
+                       if st.button("Dieses Mapping dauerhaft in Cloud sichern"):
+                    with st.spinner("Synchronisiere mit Supabase..."):
+                        # Spaltennamen säubern
+                        df_map.columns = [str(c).strip() for c in df_map.columns]
+                        k_map = next((c for c in df_map.columns if 'konto' in str(c).lower()), df_map.columns[0])
+                        
+                        for _, row in df_map.iterrows():
+                            # WICHTIG: .iloc[0] oder der Spaltenname k_map greift den ECHTEN Wert
+                            m_data = {"konto_nr": str(row[k_map]).strip().replace('.0', '')}
+                            for i in range(1, 8):
+                                m_data[f"ausweis_{i}"] = str(row.get(f"Ausweis_{i}", "Nicht zugeordnet"))
+                            
+                            try:
+                                supabase.table("master_mapping").upsert(m_data).execute()
+                            except Exception as e:
+                                st.error(f"Fehler bei Zeile: {e}")
+                        st.success("Mapping mit echten Kontonummern gespeichert!")
+                        st.rerun()
+
 
 
 elif phase == "4: Prüfen & Optimieren":
