@@ -84,35 +84,41 @@ elif phase == "3: Zahlen hochladen (SuSa)":
 
 
 elif phase == "4: Prüfen & Optimieren":
-    st.header("Phase 4: Smart Interview & Nachmapping")
+    st.header("Phase 4: Lücken-Analyse & Qualitätssicherung")
+    
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data']
         
-        # 1. Unbekannte Konten finden
-        offen = df[df['Ausweis_4'] == "Nicht zugeordnet"]
+        # 1. Identifikation fehlender Mappings
+        # Wir suchen Konten, die in Ausweis_1 "Nicht zugeordnet" sind
+        luecken = df[df['Ausweis_1'] == "Nicht zugeordnet"].copy()
         
-        if not offen.empty:
-            st.warning(f"Es gibt noch {len(offen)} Konten ohne HGB-Zuordnung.")
+        # Nur Konten mit Relevanz (Saldo != 0)
+        # Wir suchen die Spalte mit dem Saldo (enthält oft '2025' oder 'Saldo')
+        saldo_col = next((c for c in df.columns if '2025' in str(c) or 'Saldo' in str(c)), df.columns[2])
+        luecken_relevant = luecken[luecken[saldo_col].fillna(0) != 0]
+        
+        if not luecken_relevant.empty:
+            st.error(f"Kritisch: {len(luecken_relevant)} neue Konten ohne Zuordnung gefunden!")
+            st.dataframe(
+                luecken_relevant[['KontoNr', 'Kontobezeichnung', saldo_col]],
+                column_config={saldo_col: st.column_config.NumberColumn("Betrag", format="%.2f €")},
+                hide_index=True
+            )
+            st.info("💡 Tipp: Ergänzen Sie diese Konten in Ihrer Master-Mapping-Datei und laden Sie diese in Phase 3 erneut hoch.")
+        else:
+            st.success("✅ Alle Konten mit Salden sind korrekt im Master-Mapping erfasst.")
             
-            with st.expander("Jetzt nachmappen"):
-                auswahl_konto = st.selectbox("Konto wählen:", offen['KontoNr'] + " - " + offen['Kontobezeichnung'])
-                neue_pos = st.selectbox("Zuordnen zu (Ebene 4):", ["Sachanlagen", "Umlaufvermögen", "Rechnungsabgrenzung"])
-                
-                if st.button("Zuordnung speichern"):
-                    # Logik: Im echten System würden wir das jetzt in einer DB oder im SessionState speichern
-                    st.success(f"Konto {auswahl_konto} wurde vorläufig als '{neue_pos}' markiert.")
-        
         st.divider()
         
-        # 2. Fachliche Prüfung: Sachanlagen (Beispiel)
-        sachanlagen = df[df['Ausweis_4'] == "Sachanlagen"]
-        if not sachanlagen.empty:
-            st.subheader("Fokus: Sachanlagen")
-            wert = sachanlagen.iloc[:, 2].sum() # Nimmt den Saldo aus der 3. Spalte
-            st.write(f"Gesamtwert Sachanlagen: **{wert:,.2f} €**")
-            st.checkbox("Sind alle Anlagenzugänge 2025 bereits erfasst?")
+        # 2. Fachlicher Check: Werthaltigkeit
+        st.subheader("Fachliche Prüfung")
+        if st.checkbox("Sachanlagen auf Abnutzung prüfen?"):
+            st.write("LUMINA scannt Konten der Klasse 0-1 nach hohen Restwerten...")
+            # Hier kommt später die KI-Logik rein
     else:
-        st.warning("Bitte laden Sie in Phase 3 eine SuSa hoch.")
+        st.warning("Bitte schließen Sie zuerst Phase 3 ab.")
+
 
 
 elif phase == "5: Abschluss prüfen":
