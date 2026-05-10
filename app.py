@@ -438,8 +438,11 @@ def build_pivot(df: pd.DataFrame, group_level: int, value_cols: list[str]) -> pd
     return df.groupby(ausweis_cols, dropna=False)[value_cols].sum().reset_index()
 
 
-def _tree_amounts(row: pd.Series, value_cols: list[str]) -> str:
-    return " | ".join(f"{html.escape(str(c))}: {format_de_number(row.get(c, 0))}" for c in value_cols)
+def _tree_amount_cells(row: pd.Series, value_cols: list[str]) -> str:
+    return "".join(
+        f"<span class='amount'>{format_de_number(row.get(c, 0))}</span>"
+        for c in value_cols
+    )
 
 
 def _leaf_table_html(df: pd.DataFrame, value_cols: list[str]) -> str:
@@ -468,7 +471,11 @@ def _tree_node_html(df: pd.DataFrame, levels: list[str], value_cols: list[str], 
     for label, group in df.groupby(col, dropna=False, sort=True):
         label_text = str(label).strip() if str(label).strip() else "(ohne weitere Untergliederung)"
         sums = group[value_cols].sum(numeric_only=True)
-        summary = f"{html.escape(label_text)} <span>{len(group)} Konto/Konten | {_tree_amounts(sums, value_cols)}</span>"
+        summary = (
+            f"<span class='tree-label'>{html.escape(label_text)}</span>"
+            f"<span class='count'>{len(group)} Konto/Konten</span>"
+            f"<span class='amounts'>{_tree_amount_cells(sums, value_cols)}</span>"
+        )
         open_attr = " open" if depth < 1 else ""
         parts.append(
             f"<details class='lumina-tree-level level-{depth}'{open_attr}>"
@@ -486,8 +493,28 @@ def tree_view_html(df: pd.DataFrame, value_cols: list[str]) -> str:
         tree_df[col] = tree_df[col].fillna("").astype(str).str.strip()
     tree_df = tree_df[tree_df["KontoNr"].astype(str).str.strip() != ""].copy()
 
+    amount_headers = "".join(f"<span>{html.escape(str(c))}</span>" for c in value_cols)
+
     return f"""
     <style>
+    .lumina-tree {{
+        max-width: 100%;
+    }}
+    .lumina-tree-header {{
+        display: grid;
+        grid-template-columns: minmax(22rem, 1fr) 8rem repeat({len(value_cols)}, 10rem);
+        column-gap: 0.75rem;
+        padding: 0.35rem 0.3rem 0.45rem 2.3rem;
+        border-bottom: 1px solid #e5e7eb;
+        color: #6b7280;
+        font-size: 0.88rem;
+    }}
+    .lumina-tree-header .amount-head {{
+        display: contents;
+    }}
+    .lumina-tree-header span:not(:first-child) {{
+        text-align: right;
+    }}
     .lumina-tree details {{
         border-left: 1px solid #e5e7eb;
         margin: 0.18rem 0 0.18rem 0.9rem;
@@ -498,12 +525,27 @@ def tree_view_html(df: pd.DataFrame, value_cols: list[str]) -> str:
         padding: 0.45rem 0.3rem;
         font-weight: 650;
         color: #1f2937;
+        display: grid;
+        grid-template-columns: minmax(22rem, 1fr) 8rem repeat({len(value_cols)}, 10rem);
+        column-gap: 0.75rem;
+        align-items: baseline;
     }}
-    .lumina-tree summary span {{
+    .lumina-tree summary .count {{
         color: #6b7280;
         font-weight: 400;
-        margin-left: 0.75rem;
         font-size: 0.9rem;
+        text-align: right;
+        white-space: nowrap;
+    }}
+    .lumina-tree summary .amounts {{
+        display: contents;
+    }}
+    .lumina-tree summary .amount {{
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        color: #4b5563;
+        font-weight: 400;
     }}
     .lumina-tree-table {{
         border-collapse: collapse;
@@ -519,9 +561,15 @@ def tree_view_html(df: pd.DataFrame, value_cols: list[str]) -> str:
     .lumina-tree-table td:nth-child(n+3), .lumina-tree-table th:nth-child(n+3) {{
         text-align: right;
         white-space: nowrap;
+        font-variant-numeric: tabular-nums;
     }}
     </style>
     <div class="lumina-tree">
+        <div class="lumina-tree-header">
+            <span>Position</span>
+            <span>Konten</span>
+            <span class="amount-head">{amount_headers}</span>
+        </div>
         {_tree_node_html(tree_df, ausweis_cols, value_cols)}
     </div>
     """
