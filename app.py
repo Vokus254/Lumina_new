@@ -51,15 +51,17 @@ elif phase == "2: Unternehmen verstehen":
 elif phase == "3: Zahlen hochladen (SuSa)":
     st.header("Phase 3: Master-Mapping & SuSa")
 # In Phase 3 der app.py:
-m_data = {
-    "konto_nr": str(row[k_map]).strip().replace('.0', ''),
-    "ausweis_1": str(row.get("Ausweis_1", "")),
-    "ausweis_2": str(row.get("Ausweis_2", "")),
-    "ausweis_3": str(row.get("Ausweis_3", "")),
-    "ausweis_4": str(row.get("Ausweis_4", "")),
-    "ausweis_5": str(row.get("Ausweis_5", "")),
-    "ausweis_6": str(row.get("Ausweis_6", "")),
-    "ausweis_7": str(row.get("Ausweis_7", ""))    
+                    m_data = {
+                        "konto_nr": str(row[k_map]).strip().replace('.0', ''),
+                        "ausweis_1": str(row.get("Ausweis_1", "")),
+                        "ausweis_2": str(row.get("Ausweis_2", "")),
+                        "ausweis_3": str(row.get("Ausweis_3", "")),
+                        "ausweis_4": str(row.get("Ausweis_4", "")),
+                        "ausweis_5": str(row.get("Ausweis_5", "")),
+                        "ausweis_6": str(row.get("Ausweis_6", "")), # Hier war vermutlich das Komma vergessen
+                        "ausweis_7": str(row.get("Ausweis_7", ""))  # Hier darf keins stehen (letzte Zeile)
+                    }
+  
     col1, col2 = st.columns(2)
     with col1:
         map_file = st.file_uploader("1. Master-Mapping Excel", type=["xlsx"])
