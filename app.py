@@ -291,71 +291,33 @@ def load_mapping_from_supabase():
     sb = get_supabase_client()
     if sb is None:
         return None, "Supabase ist nicht verbunden. Prüfe Streamlit Secrets."
-
     try:
-        all_rows = []
-        page_size = 500
-        start = 0
-
-        while True:
-            end = start + page_size - 1
-
-            res = (
-                sb.table("master_mapping")
-                .select("*")
-                .order("konto_nr")
-                .range(start, end)
-                .execute()
-            )
-
-            rows = res.data or []
-            all_rows.extend(rows)
-
-            if len(rows) < page_size:
-                break
-
-            start += page_size
-
-        df = pd.DataFrame(all_rows)
-
+        res = sb.table("master_mapping").select("*").execute()
+        df = pd.DataFrame(res.data)
         if df.empty:
             return None, "Tabelle master_mapping ist leer."
-
         df = df.rename(columns={"konto_nr": "KontoNr"})
-
         for i in range(1, 8):
             df = df.rename(columns={f"ausweis_{i}": f"Ausweis_{i}"})
-
         return normalize_mapping(df), None
-
     except Exception as e:
         return None, f"Supabase-Laden fehlgeschlagen: {e}"
+
 
 def save_mapping_to_supabase(mapping: pd.DataFrame):
     sb = get_supabase_client()
     if sb is None:
         return "Supabase ist nicht verbunden."
-
     try:
         df = normalize_mapping(mapping)
-
         rows = []
         for _, r in df.iterrows():
-            item = {"konto_nr": str(r["KontoNr"]).strip()}
+            item = {"konto_nr": r["KontoNr"]}
             for i in range(1, 8):
-                item[f"ausweis_{i}"] = str(r.get(f"Ausweis_{i}", "")).strip()
+                item[f"ausweis_{i}"] = r[f"Ausweis_{i}"]
             rows.append(item)
-
-        batch_size = 500
-        for start in range(0, len(rows), batch_size):
-            batch = rows[start:start + batch_size]
-            sb.table("master_mapping").upsert(
-                batch,
-                on_conflict="konto_nr"
-            ).execute()
-
+        sb.table("master_mapping").upsert(rows, on_conflict="konto_nr").execute()
         return None
-
     except Exception as e:
         return f"Supabase-Speichern fehlgeschlagen: {e}"
 
@@ -642,7 +604,6 @@ elif phase == "6 Export":
         )
 
         st.info("PDF würde ich erst später ergänzen. Für Wirtschaftsprüfer ist zuerst ein sauberer Excel-Export wertvoller.")
-
 
 
 
