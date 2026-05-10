@@ -187,49 +187,44 @@ elif phase == "6: Export & Versand":
         df = st.session_state['susa_data'].copy()
         df.columns = [str(c).strip() for c in df.columns]
         
+        # Spalten finden
         ausweis_cols = [c for c in df.columns if 'ausweis' in c.lower()]
         wert_cols = [c for c in df.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
         k_col = next((c for c in df.columns if 'konto' in str(c).lower()), 'KontoNr')
         b_col = next((c for c in df.columns if 'bezeich' in str(c).lower()), 'Bezeichnung')
 
         if ausweis_cols and wert_cols:
-            # Reiter 1: Aggregierte Bilanz (wie bisher)
+            # 1. Reiter: Aggregierte Bilanz
             summary_df = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
             
-            # Reiter 2: Alle Konten mit Zuordnung (für die Fehlersuche)
-            detail_df = df[[k_col, b_col] + ausweis_cols[:5] + wert_cols].sort_values(by=ausweis_cols[:5])
+            # 2. Reiter: Alle Konten mit Zuordnung (für die Suche nach den 14.307,04 €)
+            detail_df = df[[k_col, b_col] + ausweis_cols + wert_cols].sort_values(by=ausweis_cols)
 
+            # --- EXCEL GENERIERUNG ---
             import io
             buffer = io.BytesIO()
-            # Wir nutzen 'with', um sicherzustellen, dass die Datei korrekt geschlossen wird
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                summary_df.to_excel(writer, index=False, sheet_name='Bilanz_GuV_Zusammenfassung')
-                detail_df.to_excel(writer, index=False, sheet_name='Konten_Details')
-                
-                # Formatierung des ersten Reiters
-                worksheet = writer.sheets['Bilanz_GuV_Zusammenfassung']
-                for cell in worksheet:
-                    if cell.row == 1:
-                        from openpyxl.styles import Font, PatternFill
-                        cell.font = Font(bold=True)
-                        cell.fill = PatternFill(start_color="CCE5FF", end_color="CCE5FF", fill_type="solid")
-
-            st.success("Excel-Datei mit 2 Reitern generiert: 'Zusammenfassung' & 'Konten_Details'.")
+                summary_df.to_excel(writer, index=False, sheet_name='Zusammenfassung')
+                detail_df.to_excel(writer, index=False, sheet_name='Kontendetails')
+            
+            st.success("Excel-Datei mit 2 Reitern erfolgreich erstellt!")
             
             st.download_button(
-                label="📥 Excel-Bericht zur Fehleranalyse herunterladen",
+                label="📥 Excel-Bericht herunterladen",
                 data=buffer.getvalue(),
-                file_name="LUMINA_Fehleranalyse.xlsx",
+                file_name="LUMINA_Abschluss_Analyse.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             
-            # Info zur Differenz
-            diff_2025 = summary_df[wert_cols[-1]].sum()
-            if abs(diff_2025) > 0.01:
-                st.error(f"Achtung: Die Bilanz ist nicht ausgeglichen! Differenz 2025: {diff_2025:,.2f} €")
-                st.info("Prüfen Sie im Reiter 'Konten_Details', ob Konten falsch zugeordnet sind oder Vorzeichen fehlen.")
+            # --- DIFFERENZ-ANALYSE DIREKT IN DER APP ---
+            diff = summary_df[wert_cols[-1]].sum()
+            if abs(diff) > 0.1:
+                st.error(f"Bilanz-Differenz: {diff:,.2f} €")
+                st.info("💡 Tipp: Suchen Sie in der Excel im Reiter 'Kontendetails' nach Konten, die in der Spalte 'Ausweis_1' fehlen.")
             else:
-                st.success("Bilanz ist rechnerisch ausgeglichen (Summe = 0).")
+                st.success("Bilanz ist ausgeglichen.")
+        else:
+            st.error("Konnte Spalten für den Export nicht eindeutig identifizieren.")
     else:
         st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
 
