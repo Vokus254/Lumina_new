@@ -82,16 +82,34 @@ elif phase == "3: Zahlen hochladen (SuSa)":
             st.error("Konnte Kontospalten nicht finden. Bitte prüfen Sie die Dateien.")
 
 elif phase == "4: Prüfen & Optimieren":
-    st.header("Phase 4: Lücken-Analyse")
+    st.header("Phase 4: Lücken-Analyse & Qualitätssicherung")
+    
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data']
-        ausweis_col = next((c for c in df.columns if 'Ausweis_1' in str(c)), None)
-        if ausweis_col:
-            luecken = df[df[ausweis_col].isna() | (df[ausweis_col] == "Nicht zugeordnet")]
-            st.warning(f"{len(luecken)} Konten ohne Zuordnung gefunden.")
-            st.dataframe(luecken)
+        
+        # 1. Spalten-Check für die Fehlersuche
+        with st.expander("🔍 Technische Spalten-Analyse"):
+            st.write("Verfügbare Spalten im System:", list(df.columns))
+        
+        # 2. Suche nach Konten ohne Mapping
+        # Wir suchen Spalten, die 'Ausweis' im Namen haben
+        ausweis_cols = [c for c in df.columns if 'Ausweis' in str(c)]
+        
+        if ausweis_cols:
+            # Finde Zeilen, bei denen die erste Ausweis-Spalte leer (NaN) ist
+            luecken = df[df[ausweis_cols[0]].isna()].copy()
+            
+            if not luecken.empty:
+                st.error(f"Achtung: {len(luecken)} Konten aus der SuSa wurden im Master-Mapping nicht gefunden!")
+                st.dataframe(luecken[['KontoNr', 'Kontobezeichnung']], hide_index=True)
+                st.info("💡 Diese Konten fehlen in deiner Master-Mapping-Datei. Bitte dort ergänzen und in Phase 3 neu hochladen.")
+            else:
+                st.success("✅ Hervorragend! Alle Konten der SuSa sind im Master-Mapping hinterlegt.")
+        else:
+            st.warning("Keine Mapping-Daten gefunden. Bitte prüfen Sie, ob das Master-Mapping in Phase 3 die Spalten 'Ausweis_1' bis 'Ausweis_7' enthält.")
     else:
-        st.warning("Bitte erst Daten in Phase 3 laden.")
+        st.warning("Keine Daten vorhanden. Bitte laden Sie in Phase 3 erst die Dateien hoch.")
+
 
 elif phase == "5: Abschluss prüfen":
     st.header("Phase 5: Struktur-Bilanz")
