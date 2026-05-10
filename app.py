@@ -13,6 +13,11 @@ except Exception:
     create_client = None
 
 try:
+    from openai import OpenAI
+except Exception:
+    OpenAI = None
+
+try:
     from mapping import get_dynamic_mapping
 except Exception:
     get_dynamic_mapping = None
@@ -567,6 +572,59 @@ def interpretation_markdown(
     return "\n".join(lines)
 
 
+@st.cache_resource(show_spinner=False)
+def get_openai_client():
+    if OpenAI is None:
+        return None
+    try:
+        api_key = st.secrets.get("OPENAI_API_KEY")
+        if not api_key:
+            return None
+        return OpenAI(api_key=api_key)
+    except Exception:
+        return None
+
+
+def openai_status() -> str:
+    if OpenAI is None:
+        return "OpenAI-Paket ist nicht installiert."
+    if not st.secrets.get("OPENAI_API_KEY"):
+        return "OPENAI_API_KEY fehlt in Streamlit Secrets."
+    return "verbunden"
+
+
+def generate_openai_interpretation(prompt_text: str, model: str) -> tuple[str | None, str | None]:
+    client = get_openai_client()
+    if client is None:
+        return None, openai_status()
+
+    instructions = """
+Du bist ein vorsichtiger deutscher HGB-Abschlussanalyst.
+Erzeuge eine fachlich belastbare, prüferfreundliche Interpretation der gelieferten Zahlenbasis.
+Trenne klar zwischen beobachtbaren Zahlenentwicklungen, möglichen Ursachen/Hypothesen und Rückfragen.
+Erfinde keine Sachverhalte. Nutze keine externen Informationen. Schreibe prägnant, aber verwertbar.
+Struktur:
+1. Executive Summary
+2. Vermögenslage
+3. Finanzlage
+4. Ertragslage
+5. Hinweise für den Anhang
+6. Hinweise für den Lagebericht
+7. Management-Reporting
+8. Rückfragen und benötigte Nachweise
+"""
+
+    try:
+        response = client.responses.create(
+            model=model,
+            instructions=instructions,
+            input=prompt_text,
+        )
+        return response.output_text, None
+    except Exception as e:
+        return None, f"OpenAI-Anfrage fehlgeschlagen: {e}"
+
+
 def _tree_amount_cells(row: pd.Series, value_cols: list[str]) -> str:
     return "".join(
         f"<span class='amount'>{format_de_number(row.get(c, 0))}</span>"
@@ -878,6 +936,7 @@ for key, default in {
     "mapped": None,
     "meta": {},
     "flash_message": None,
+    "ai_interpretation": "",
 }.items():
     if key not in st.session_state:
         st.session_state[key] = default
@@ -906,6 +965,7 @@ sb_client = get_supabase_client()
 st.sidebar.markdown("---")
 st.sidebar.write("**Status**")
 st.sidebar.write("Supabase:", "✅ verbunden" if sb_client else "⚠️ nicht verbunden")
+st.sidebar.write("OpenAI:", "✅ verbunden" if openai_status() == "verbunden" else "⚠️ nicht verbunden")
 st.sidebar.write("Master-Mapping:", st.session_state.mapping_name)
 st.sidebar.write("Mapping:", "✅ geladen" if st.session_state.mapping is not None else "⚠️ fehlt")
 st.sidebar.write("SuSa:", "✅ geladen" if st.session_state.susa_norm is not None else "⚠️ fehlt")
@@ -1255,7 +1315,7 @@ elif phase == "6 Interpretation":
             account_work = add_variance_columns(df, current_col, prior_col)
             top_accounts = account_work[account_work["Veränderung_abs"] >= threshold].sort_values("Veränderung_abs", ascending=False).head(top_n)
 
-            summary_tab, account_tab, prompt_tab = st.tabs(["Auffälligkeiten", "Kontentreiber", "KI-Arbeitsgrundlage"])
+            summary_tab, account_tab, prompt_tab, ai_tab = st.tabs(["Auffälligkeiten", "Kontentreiber", "KI-Arbeitsgrundlage", "OpenAI-Entwurf"])
 
             with summary_tab:
                 st.markdown("### Auffällige Abschlusspositionen")
@@ -1290,6 +1350,47 @@ elif phase == "6 Interpretation":
                     mime="text/markdown",
                     use_container_width=True,
                 )
+
+            with ai_tab:
+                markdown = interpretation_markdown(
+                    df,
+                    value_cols,
+                    st.session_state.mandant,
+                    int(st.session_state.abschlussjahr),
+                    threshold,
+                    top_n,
+                )
+                status = openai_status()
+                if status == "verbunden":
+                    st.success("OpenAI ist verbunden.")
+                else:
+                    st.warning(status)
+                    st.caption("Lege den API-Key in Streamlit unter Secrets als OPENAI_API_KEY ab.")
+
+                model = st.selectbox(
+                    "OpenAI-Modell",
+                    ["gpt-5.2", "gpt-5"],
+                    index=0,
+                )
+
+                if st.button("Interpretation mit OpenAI erzeugen", type="primary", use_container_width=True):
+                    with st.spinner("OpenAI erstellt den Interpretationsentwurf..."):
+                        result, err = generate_openai_interpretation(markdown, model)
+                    if err:
+                        st.error(err)
+                    else:
+                        st.session_state.ai_interpretation = result or ""
+                        st.success("Interpretationsentwurf erstellt.")
+
+                if st.session_state.ai_interpretation:
+                    st.text_area("OpenAI-Entwurf", st.session_state.ai_interpretation, height=520)
+                    st.download_button(
+                        "OpenAI-Entwurf herunterladen",
+                        data=st.session_state.ai_interpretation.encode("utf-8"),
+                        file_name=f"Lumina_OpenAI_Interpretation_{st.session_state.abschlussjahr}.md",
+                        mime="text/markdown",
+                        use_container_width=True,
+                    )
 
 
 # ------------------------------------------------------------

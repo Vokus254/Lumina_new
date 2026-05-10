@@ -36,6 +36,16 @@ Die Phase `Interpretation` erzeugt zunächst eine strukturierte Zahlenbasis: auf
 
 Die Interpretation ersetzt keine fachliche Prüfung. Sachverhalte, Ursachen und Ereignisse nach dem Stichtag müssen weiterhin durch Rechnungswesen oder Mandant bestätigt werden.
 
+### OpenAI-Anbindung
+
+Für die direkte KI-Erzeugung in der App muss der API-Key als Streamlit Secret hinterlegt werden:
+
+```toml
+OPENAI_API_KEY = "sk-..."
+```
+
+Der Key gehört nicht in `app.py` und nicht ins Repository. Die App nutzt die OpenAI Responses API und erzeugt aus der strukturierten Zahlenbasis einen Entwurf für Management-Reporting, Anhang-Hinweise, Lagebericht-Hinweise und Rückfragen.
+
 ## Erwartete Spalten
 
 Die App erkennt typische Kontospalten wie `Konto`, `Kontonummer`, `KontoNr` oder `Account`. Wertspalten werden über Begriffe wie `Saldo`, `Betrag`, `Wert`, `Summe`, `Soll`, `Haben`, `Debit`, `Credit` oder Jahreszahlen erkannt.
