@@ -33,52 +33,22 @@ elif phase == "2: Unternehmen verstehen":
     st.write("LUMINA ermittelt nun Ihre Berichtspflichten gemäß HGB.")
 
 elif phase == "3: Zahlen hochladen (SuSa)":
-    st.header("Phase 3: KI-Mapping (Datenbasis)")
-    from mapping import get_hgb_mapping
-    
-    uploaded_file = st.file_uploader("Summen-Salden-Liste (Excel) hochladen", type=["xlsx"])
+    from mapping import get_hgb_structure
+    # ... (Upload Code wie gehabt) ...
     
     if uploaded_file:
-        import pandas as pd
-        # Header in Zeile 2 (Index 1)
-        df = pd.read_excel(uploaded_file, header=1)
+        structure = get_hgb_structure()
         
-        # Bereinigung: Nur Zeilen mit Kontonummern behalten
-        df = df.dropna(subset=['KontoNr'])
-        df['KontoNr'] = df['KontoNr'].astype(float).astype(int).astype(str)
+        # Jede Ausweis-Ebene als eigene Spalte hinzufügen
+        for i in range(1, 8):
+            col_name = f'Ausweis_{i}'
+            df[col_name] = df['KontoNr'].map(lambda x: structure.get(str(x), {}).get(col_name, "Nicht zugeordnet"))
         
-        # Mapping durchführen
-        mapping_tabelle = get_hgb_mapping("SKR03")
-        df['HGB_Position'] = df['KontoNr'].map(mapping_tabelle)
-        
-        # Speichern für andere Phasen
         st.session_state['susa_data'] = df
+        st.success("Hierarchisches Mapping (Ausweis 1-7) angewendet!")
         
-        # --- SICHERE SPALTEN-ERKENNUNG ---
-        # Wir suchen die Spalte, die das aktuelle Jahr enthält
-        all_cols = df.columns.tolist()
-        # Wir suchen nach "2025" in den Spaltennamen
-        saldo_col = next((c for c in all_cols if "2025" in str(c)), all_cols[2] if len(all_cols) > 2 else None)
-
-        st.success("SuSa erfolgreich eingelesen!")
-        
-        # --- VISUALISIERUNG ---
-        erkannt = df[df['HGB_Position'].notna()]
-        
-        if not erkannt.empty:
-            st.subheader("Vorschau des KI-Mappings")
-            
-            # Wir bauen eine saubere Anzeige-Tabelle ohne komplexe Spaltenkonfiguration, um Fehler zu vermeiden
-            display_df = erkannt[['KontoNr', 'Kontobezeichnung', saldo_col, 'HGB_Position']].copy()
-            
-            # Spalten für die Anzeige umbenennen (verhindert JSON-Fehler)
-            display_df.columns = ['Konto', 'Bezeichnung', 'Saldo 2025', 'HGB-Position']
-            
-            st.dataframe(display_df, hide_index=True)
-            st.info(f"LUMINA hat {len(erkannt)} Konten automatisch identifiziert.")
-        else:
-            st.warning("Mapping geladen, aber keine Konten aus der Excel gefunden. Prüfe die Nummern in deiner mapping.py!")
-            st.write("Erste 5 Konten aus deiner Excel:", df['KontoNr'].head(5).tolist())
+        # Anzeige zur Kontrolle
+        st.dataframe(df[['KontoNr', 'Kontobezeichnung', 'Ausweis_4', 'Ausweis_5', 'Ausweis_7']])
 
 
 elif phase == "4: Prüfen & Optimieren":
