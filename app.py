@@ -181,61 +181,55 @@ elif phase == "5: Abschluss prüfen":
 
 
 elif phase == "6: Export & Versand":
-    st.header("Phase 6: Finaler Export & Bericht")
+    st.header("Phase 6: Finaler Export & Fehleranalyse")
     
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data'].copy()
         df.columns = [str(c).strip() for c in df.columns]
+        
         ausweis_cols = [c for c in df.columns if 'ausweis' in c.lower()]
         wert_cols = [c for c in df.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
-        
-        if ausweis_cols and wert_cols:
-            # Aggregation (Ebene 1-5)
-            export_df = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
-            
-            import io
-            from openpyxl.styles import Font, Alignment, PatternFill
-            
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                export_df.to_excel(writer, index=False, sheet_name='LUMINA_Abschluss')
-                workbook = writer.book
-                worksheet = writer.sheets['LUMINA_Abschluss']
-                
-                # --- FORMATIERUNG ---
-                header_fill = PatternFill(start_color="CCE5FF", end_color="CCE5FF", fill_type="solid")
-                bold_font = Font(bold=True)
-                
-                # Header formatieren
-                for cell in worksheet[1]:
-                    cell.fill = header_fill
-                    cell.font = bold_font
-                
-                # Zeilenweise Formatierung für Hierarchie-Optik
-                for i, row in enumerate(export_df.values, start=2):
-                    # Beispiel: Wenn es eine Hauptgruppe (Ebene 1) ist, fett markieren
-                    if row[1] == "": # Falls Unterebenen leer sind
-                        worksheet[f'A{i}'].font = bold_font
-                    
-                    # Einrückung simulierten für Ebene 3, 4, 5
-                    worksheet[f'C{i}'].alignment = Alignment(indent=1)
-                    worksheet[f'D{i}'].alignment = Alignment(indent=2)
-                    worksheet[f'E{i}'].alignment = Alignment(indent=3)
-                
-                # Spaltenbreite anpassen
-                for column in worksheet.columns:
-                    max_length = max(len(str(cell.value)) for cell in column)
-                    worksheet.column_dimensions[column[0].column_letter].width = max_length + 2
+        k_col = next((c for c in df.columns if 'konto' in str(c).lower()), 'KontoNr')
+        b_col = next((c for c in df.columns if 'bezeich' in str(c).lower()), 'Bezeichnung')
 
-            st.success("Professioneller Excel-Bericht mit Hierarchie-Einrückung bereit.")
+        if ausweis_cols and wert_cols:
+            # Reiter 1: Aggregierte Bilanz (wie bisher)
+            summary_df = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
+            
+            # Reiter 2: Alle Konten mit Zuordnung (für die Fehlersuche)
+            detail_df = df[[k_col, b_col] + ausweis_cols[:5] + wert_cols].sort_values(by=ausweis_cols[:5])
+
+            import io
+            buffer = io.BytesIO()
+            # Wir nutzen 'with', um sicherzustellen, dass die Datei korrekt geschlossen wird
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                summary_df.to_excel(writer, index=False, sheet_name='Bilanz_GuV_Zusammenfassung')
+                detail_df.to_excel(writer, index=False, sheet_name='Konten_Details')
+                
+                # Formatierung des ersten Reiters
+                worksheet = writer.sheets['Bilanz_GuV_Zusammenfassung']
+                for cell in worksheet:
+                    if cell.row == 1:
+                        from openpyxl.styles import Font, PatternFill
+                        cell.font = Font(bold=True)
+                        cell.fill = PatternFill(start_color="CCE5FF", end_color="CCE5FF", fill_type="solid")
+
+            st.success("Excel-Datei mit 2 Reitern generiert: 'Zusammenfassung' & 'Konten_Details'.")
             
             st.download_button(
-                label="📥 Strukturierten Excel-Bericht herunterladen",
+                label="📥 Excel-Bericht zur Fehleranalyse herunterladen",
                 data=buffer.getvalue(),
-                file_name="LUMINA_Profi_Bericht.xlsx",
+                file_name="LUMINA_Fehleranalyse.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
-            st.balloons()
+            
+            # Info zur Differenz
+            diff_2025 = summary_df[wert_cols[-1]].sum()
+            if abs(diff_2025) > 0.01:
+                st.error(f"Achtung: Die Bilanz ist nicht ausgeglichen! Differenz 2025: {diff_2025:,.2f} €")
+                st.info("Prüfen Sie im Reiter 'Konten_Details', ob Konten falsch zugeordnet sind oder Vorzeichen fehlen.")
+            else:
+                st.success("Bilanz ist rechnerisch ausgeglichen (Summe = 0).")
     else:
         st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
 
