@@ -180,6 +180,59 @@ elif phase == "5: Abschluss prüfen":
         st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
 
 
+elif phase == "6: Export & Versand":
+    st.header("Phase 6: Finaler Export & Bericht")
+    
+    if 'susa_data' in st.session_state:
+        # 1. Daten vorbereiten
+        df = st.session_state['susa_data'].copy()
+        df.columns = [str(c).strip() for c in df.columns]
+        ausweis_cols = [c for c in df.columns if 'ausweis' in c.lower()]
+        wert_cols = [c for c in df.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
+        
+        if ausweis_cols and wert_cols:
+            # Aggregation (Ebene 1-5)
+            export_df = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
+            
+            st.success("Berichtsdaten bereit zum Download.")
+            
+            # --- EXCEL DOWNLOAD (Sehr stabil) ---
+            import io
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                export_df.to_excel(writer, index=False, sheet_name='LUMINA_Abschluss')
+            
+            st.download_button(
+                label="📥 Bilanz-Bericht (.xlsx) herunterladen",
+                data=buffer.getvalue(),
+                file_name="LUMINA_Bericht_2025.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+            # --- PDF DOWNLOAD (Vereinfacht ohne Header-Klasse) ---
+            from fpdf import FPDF
+            if st.button("📄 PDF-Vorschau generieren"):
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", "B", 14)
+                pdf.cell(0, 10, "LUMINA Abschlussbericht 2025", ln=True, align='C')
+                pdf.set_font("Arial", size=8)
+                pdf.ln(5)
+                
+                for _, row in export_df.head(50).iterrows():
+                    txt = f"{row.iloc} > {row.iloc} | {row[wert_cols[-1]]:,.2f} EUR"
+                    pdf.cell(0, 7, txt.encode('latin-1', 'replace').decode('latin-1'), border=1, ln=True)
+                
+                st.download_button(
+                    label="Klicken zum PDF-Download",
+                    data=bytes(pdf.output()),
+                    file_name="LUMINA_Protokoll.pdf",
+                    mime="application/pdf"
+                )
+            
+            st.balloons()
+    else:
+        st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
 
 
 
