@@ -89,36 +89,35 @@ elif phase == "4: Prüfen & Optimieren":
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data']
         
-        # 1. Identifikation fehlender Mappings
-        # Wir suchen Konten, die in Ausweis_1 "Nicht zugeordnet" sind
-        luecken = df[df['Ausweis_1'] == "Nicht zugeordnet"].copy()
+        # 1. Dynamische Suche nach der Mapping-Spalte
+        # Wir suchen die erste Spalte, die 'Ausweis' im Namen hat
+        ausweis_cols = [c for c in df.columns if 'Ausweis' in str(c)]
         
-        # Nur Konten mit Relevanz (Saldo != 0)
-        # Wir suchen die Spalte mit dem Saldo (enthält oft '2025' oder 'Saldo')
-        saldo_col = next((c for c in df.columns if '2025' in str(c) or 'Saldo' in str(c)), df.columns[2])
-        luecken_relevant = luecken[luecken[saldo_col].fillna(0) != 0]
-        
-        if not luecken_relevant.empty:
-            st.error(f"Kritisch: {len(luecken_relevant)} neue Konten ohne Zuordnung gefunden!")
-            st.dataframe(
-                luecken_relevant[['KontoNr', 'Kontobezeichnung', saldo_col]],
-                column_config={saldo_col: st.column_config.NumberColumn("Betrag", format="%.2f €")},
-                hide_index=True
-            )
-            st.info("💡 Tipp: Ergänzen Sie diese Konten in Ihrer Master-Mapping-Datei und laden Sie diese in Phase 3 erneut hoch.")
-        else:
-            st.success("✅ Alle Konten mit Salden sind korrekt im Master-Mapping erfasst.")
+        if ausweis_cols:
+            main_ausweis = ausweis_cols[0]
+            # Wir suchen Konten, die dort "Nicht zugeordnet" sind (oder leer/NaN)
+            luecken = df[df[main_ausweis].fillna("Nicht zugeordnet") == "Nicht zugeordnet"].copy()
             
-        st.divider()
-        
-        # 2. Fachlicher Check: Werthaltigkeit
-        st.subheader("Fachliche Prüfung")
-        if st.checkbox("Sachanlagen auf Abnutzung prüfen?"):
-            st.write("LUMINA scannt Konten der Klasse 0-1 nach hohen Restwerten...")
-            # Hier kommt später die KI-Logik rein
+            # Saldo-Spalte finden
+            saldo_col = next((c for c in df.columns if any(x in str(c) for x in ['2025', 'Saldo', '31.12'])), None)
+            
+            if not luecken.empty and saldo_col:
+                # Nur relevante Konten (Saldo != 0)
+                luecken_relevant = luecken[luecken[saldo_col].fillna(0) != 0]
+                
+                if not luecken_relevant.empty:
+                    st.error(f"Kritisch: {len(luecken_relevant)} Konten mit Salden ohne Zuordnung gefunden!")
+                    st.dataframe(luecken_relevant[['KontoNr', 'Kontobezeichnung', saldo_col]], hide_index=True)
+                else:
+                    st.success("✅ Alle Konten mit Salden sind im Master-Mapping erfasst.")
+            else:
+                st.success("✅ Vollständiges Mapping erkannt.")
+        else:
+            st.warning("Keine 'Ausweis'-Spalten im Datensatz gefunden. Bitte prüfen Sie die Spaltennamen in Ihrem Master-Mapping.")
+            st.write("Verfügbare Spalten:", list(df.columns))
+            
     else:
-        st.warning("Bitte schließen Sie zuerst Phase 3 ab.")
-
+        st.warning("Bitte laden Sie in Phase 3 die Dateien hoch.")
 
 
 elif phase == "5: Abschluss prüfen":
