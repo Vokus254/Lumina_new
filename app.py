@@ -87,28 +87,36 @@ elif phase == "4: Prüfen & Optimieren":
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data']
         
-        # 1. Spalten-Check für die Fehlersuche
+        # 1. Technische Analyse
         with st.expander("🔍 Technische Spalten-Analyse"):
-            st.write("Verfügbare Spalten im System:", list(df.columns))
+            st.write("Verfügbare Spalten:", list(df.columns))
         
-        # 2. Suche nach Konten ohne Mapping
-        # Wir suchen Spalten, die 'Ausweis' im Namen haben
-        ausweis_cols = [c for c in df.columns if 'Ausweis' in str(c)]
+        # 2. Mapping-Spalten finden
+        ausweis_cols = [c for c in df.columns if 'ausweis' in str(c).lower()]
         
         if ausweis_cols:
-            # Finde Zeilen, bei denen die erste Ausweis-Spalte leer (NaN) ist
-            luecken = df[df[ausweis_cols[0]].isna()].copy()
+            # Suche Zeilen, die in der ersten Ausweis-Ebene leer sind
+            first_a = ausweis_cols[0]
+            luecken = df[df[first_a].isna() | (df[first_a] == "Nicht zugeordnet")].copy()
             
             if not luecken.empty:
                 st.error(f"Achtung: {len(luecken)} Konten aus der SuSa wurden im Master-Mapping nicht gefunden!")
-                st.dataframe(luecken[['KontoNr', 'Kontobezeichnung']], hide_index=True)
-                st.info("💡 Diese Konten fehlen in deiner Master-Mapping-Datei. Bitte dort ergänzen und in Phase 3 neu hochladen.")
+                
+                # Identifiziere Spalten für die Anzeige dynamisch
+                k_col = next((c for c in luecken.columns if 'konto' in str(c).lower()), luecken.columns[0])
+                b_col = next((c for c in luecken.columns if 'bezeich' in str(c).lower()), None)
+                
+                # Nur vorhandene Spalten anzeigen
+                cols_to_show = [c for c in [k_col, b_col] if c is not None]
+                st.dataframe(luecken[cols_to_show], hide_index=True)
+                
+                st.info("💡 Diese Konten fehlen in deinem Master-Mapping. Ergänze sie dort, um eine vollständige Bilanz zu erhalten.")
             else:
-                st.success("✅ Hervorragend! Alle Konten der SuSa sind im Master-Mapping hinterlegt.")
+                st.success("✅ Alle Konten der SuSa sind im Master-Mapping hinterlegt.")
         else:
-            st.warning("Keine Mapping-Daten gefunden. Bitte prüfen Sie, ob das Master-Mapping in Phase 3 die Spalten 'Ausweis_1' bis 'Ausweis_7' enthält.")
+            st.warning("Keine Mapping-Ebenen gefunden. Prüfe das Master-File in Phase 3.")
     else:
-        st.warning("Keine Daten vorhanden. Bitte laden Sie in Phase 3 erst die Dateien hoch.")
+        st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
 
 
 elif phase == "5: Abschluss prüfen":
