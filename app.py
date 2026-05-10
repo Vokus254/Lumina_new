@@ -6,15 +6,15 @@ from supabase import create_client, Client
 # --- 1. KONFIGURATION & DATENBANK ---
 st.set_page_config(page_title="LUMINA - Abschluss-Assistent", layout="wide")
 
-# Datenbank-Verbindung (Secrets müssen in Streamlit Cloud hinterlegt sein)
+# Datenbank-Verbindung über Secrets
 try:
     url = st.secrets["SUPABASE_URL"]
     key = st.secrets["SUPABASE_KEY"]
     supabase: Client = create_client(url, key)
 except Exception as e:
-    st.sidebar.error("Datenbank nicht verbunden. Bitte Secrets prüfen.")
+    st.sidebar.error("Datenbank-Verbindung fehlgeschlagen. Bitte Secrets prüfen.")
 
-# Hilfsfunktion zur Zahlenreinigung (Währungstexte zu Floats)
+# Hilfsfunktion zur Zahlenreinigung
 def clean_currency(value):
     if pd.isna(value) or str(value).strip() in ["", "0", "None"]:
         return 0.0
@@ -41,27 +41,16 @@ phase = st.sidebar.radio(
 if phase == "1: Willkommen":
     st.header("Willkommen bei LUMINA")
     st.subheader("Ihr digitaler Abschluss-Assistent")
-    st.info("Das System ist bereit für den hierarchischen HGB-Abschluss.")
+    st.info("Das System ist mit der Cloud-Datenbank (Supabase) verbunden.")
 
 elif phase == "2: Unternehmen verstehen":
     st.header("Phase 2: Unternehmen verstehen")
-    st.text_input("Mandanten-Name", value="Beispiel GmbH")
-    st.selectbox("Abschluss-Standard", ["HGB (Konzern)", "HGB (Einzelabschluss)"])
+    mandant = st.text_input("Mandanten-Name", value="Beispiel GmbH")
+    st.write(f"Vorbereitung für: {mandant}")
 
 elif phase == "3: Zahlen hochladen (SuSa)":
     st.header("Phase 3: Master-Mapping & SuSa")
-# In Phase 3 der app.py:
-                    m_data = {
-                        "konto_nr": str(row[k_map]).strip().replace('.0', ''),
-                        "ausweis_1": str(row.get("Ausweis_1", "")),
-                        "ausweis_2": str(row.get("Ausweis_2", "")),
-                        "ausweis_3": str(row.get("Ausweis_3", "")),
-                        "ausweis_4": str(row.get("Ausweis_4", "")),
-                        "ausweis_5": str(row.get("Ausweis_5", "")),
-                        "ausweis_6": str(row.get("Ausweis_6", "")), # Hier war vermutlich das Komma vergessen
-                        "ausweis_7": str(row.get("Ausweis_7", ""))  # Hier darf keins stehen (letzte Zeile)
-                    }
-  
+    
     col1, col2 = st.columns(2)
     with col1:
         map_file = st.file_uploader("1. Master-Mapping Excel", type=["xlsx"])
@@ -69,6 +58,7 @@ elif phase == "3: Zahlen hochladen (SuSa)":
         susa_file = st.file_uploader("2. Mandanten-SuSa Excel", type=["xlsx"])
 
     if map_file and susa_file:
+        # Automatischer Header-Scan
         def get_clean_df(file):
             df_raw = pd.read_excel(file, header=None)
             header_idx = 0
@@ -81,22 +71,24 @@ elif phase == "3: Zahlen hochladen (SuSa)":
         df_map = get_clean_df(map_file)
         df_susa = get_clean_df(susa_file)
         
+        # Spalten finden
         k_map = next((c for c in df_map.columns if 'konto' in str(c).lower()), None)
         k_susa = next((c for c in df_susa.columns if 'konto' in str(c).lower()), None)
         
         if k_map and k_susa:
+            # Kontonummern harmonisieren
             df_map[k_map] = df_map[k_map].astype(str).str.strip().str.replace('.0', '', regex=False)
             df_susa[k_susa] = df_susa[k_susa].astype(str).str.strip().str.replace('.0', '', regex=False)
             
-            # Merge (Join)
+            # Mapping durchführen (Join)
             df_final = pd.merge(df_susa, df_map, left_on=k_susa, right_on=k_map, how='left')
             
-            # Sicherheits-Logik: Klärungsposten für ungemappte Konten
+            # Sicherheits-Logik (Klärungsposten)
             ausweis_cols = [c for c in df_final.columns if 'Ausweis' in str(c)]
             for col in ausweis_cols:
                 df_final[col] = df_final[col].fillna("9. KLÄRUNGSPOSTEN (Mapping fehlt)")
             
-            # Zahlenreinigung für alle Wertspalten (2025, 2024, etc.)
+            # Zahlen reinigen
             wert_cols = [c for c in df_final.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
             for c in wert_cols:
                 df_final[c] = df_final[c].apply(clean_currency)
@@ -104,28 +96,27 @@ elif phase == "3: Zahlen hochladen (SuSa)":
             st.session_state['susa_data'] = df_final
             st.success("Mapping & Datenreinigung erfolgreich!")
             
-            # OPTIONAL: In Supabase speichern
-        if st.button("Dieses Master-Mapping in Cloud sichern"):
-            with st.spinner("Synchronisiere mit Supabase..."):
-                # Diese Zeilen MÜSSEN eingerückt sein:
-                for _, row in df_map.iterrows():
-                    m_data = {
-                        "Konto_nr": str(row[k_map]).strip().replace('.0', ''),
-                        "ausweis_1": str(row.get("Ausweis_1", "")),
-                        "ausweis_2": str(row.get("Ausweis_2", "")),
-                        "ausweis_3": str(row.get("Ausweis_3", "")),
-                        "ausweis_4": str(row.get("Ausweis_4", "")),
-                        "ausweis_5": str(row.get("Ausweis_5", "")),
-                        "ausweis_6": str(row.get("Ausweis_6", "")),
-                        "ausweis_7": str(row.get("Ausweis_7", ""))
-                    }
-                    supabase.table("master_mapping").upsert(m_data).execute()
-                st.success("Mapping erfolgreich mit der Cloud synchronisiert!")
-
+            # --- SPEICHERN IN SUPABASE ---
+            if st.button("Dieses Master-Mapping in Cloud sichern"):
+                with st.spinner("Synchronisiere mit Supabase..."):
+                    for _, row in df_map.iterrows():
+                        m_data = {
+                            "konto_nr": str(row[k_map]).strip().replace('.0', ''),
+                            "ausweis_1": str(row.get("Ausweis_1", "")),
+                            "ausweis_2": str(row.get("Ausweis_2", "")),
+                            "ausweis_3": str(row.get("Ausweis_3", "")),
+                            "ausweis_4": str(row.get("Ausweis_4", "")),
+                            "ausweis_5": str(row.get("Ausweis_5", "")),
+                            "ausweis_6": str(row.get("Ausweis_6", "")),
+                            "ausweis_7": str(row.get("Ausweis_7", ""))
+                        }
+                        try:
+                            supabase.table("master_mapping").upsert(m_data).execute()
+                        except Exception as e:
+                            st.error(f"Fehler bei Konto {row[k_map]}: {e}")
+                    st.success("Erfolgreich in Cloud gespeichert!")
+            
             st.dataframe(df_final.head(10))
-
-}
-supabase.table("master_mapping").upsert(m_data).execute()
 
 elif phase == "4: Prüfen & Optimieren":
     st.header("Phase 4: Lücken-Analyse")
@@ -135,12 +126,10 @@ elif phase == "4: Prüfen & Optimieren":
         if a1_col:
             luecken = df[df[a1_col] == "9. KLÄRUNGSPOSTEN (Mapping fehlt)"]
             if not luecken.empty:
-                st.error(f"Gefunden: {len(luecken)} Konten ohne Zuordnung im Master.")
+                st.error(f"Kritisch: {len(luecken)} Konten ohne Zuordnung gefunden!")
                 st.dataframe(luecken)
             else:
-                st.success("Alle Konten sind erfolgreich zugeordnet.")
-    else:
-        st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
+                st.success("Vollständiges Mapping erkannt.")
 
 elif phase == "5: Abschluss prüfen":
     st.header("Phase 5: Struktur-Bilanz")
@@ -153,9 +142,7 @@ elif phase == "5: Abschluss prüfen":
         if ausweis_cols and wert_cols:
             pivot = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
             st.dataframe(pivot, use_container_width=True)
-            st.metric("Kontrollwert (Sollte 0 sein)", f"{pivot[wert_cols[-1]].sum():,.2f} €")
-    else:
-        st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
+            st.metric("Kontrollwert 2025", f"{pivot[wert_cols[-1]].sum():,.2f} €")
 
 elif phase == "6: Export & Versand":
     st.header("Phase 6: Finaler Export")
@@ -173,7 +160,7 @@ elif phase == "6: Export & Versand":
         st.download_button(
             label="📥 Excel-Bericht herunterladen",
             data=buffer.getvalue(),
-            file_name="LUMINA_Abschluss_2025.xlsx",
+            file_name="LUMINA_Bericht.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         st.balloons()
