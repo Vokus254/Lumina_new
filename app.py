@@ -3,7 +3,7 @@ import pandas as pd
 import io
 from supabase import create_client, Client
 
-# --- 1. BASIS-KONFIGURATION & DATENBANK ---
+# --- 1. KONFIGURATION & DATENBANK ---
 st.set_page_config(page_title="LUMINA - Abschluss-Assistent", layout="wide")
 
 # Datenbank-Verbindung (Secrets müssen in Streamlit Cloud hinterlegt sein)
@@ -57,7 +57,7 @@ if phase == "1: Willkommen":
 
 elif phase == "2: Unternehmen verstehen":
     st.header("Phase 2: Unternehmen verstehen")
-    mandant = st.text_input("Mandanten-Name", value="Beispiel GmbH")
+    st.text_input("Mandanten-Name", value="Beispiel GmbH")
     st.selectbox("Abschluss-Standard", ["HGB (Konzern)", "HGB (Einzelabschluss)"])
 
 elif phase == "3: Zahlen hochladen (SuSa)":
@@ -65,7 +65,7 @@ elif phase == "3: Zahlen hochladen (SuSa)":
     
     col1, col2 = st.columns(2)
     with col1:
-        map_file = st.file_uploader("1. Master-Mapping Excel (Optional, falls nicht in Cloud)", type=["xlsx"])
+        map_file = st.file_uploader("1. Master-Mapping Excel (Optional)", type=["xlsx"])
     with col2:
         susa_file = st.file_uploader("2. Mandanten-SuSa Excel", type=["xlsx"])
 
@@ -77,21 +77,27 @@ elif phase == "3: Zahlen hochladen (SuSa)":
             # Kontonummern harmonisieren
             df_susa[k_susa] = df_susa[k_susa].astype(str).str.strip().str.replace('.0', '', regex=False)
             
-            # --- MAPPING-QUELLE ENTSCHEIDEN ---
+            # Entscheidung: Woher kommt das Mapping?
             if map_file:
                 df_map = get_clean_df(map_file)
                 st.info("Nutze hochgeladenes Mapping-File.")
                 
-                               if st.button("Dieses Mapping dauerhaft in Cloud sichern"):
+                if st.button("Dieses Mapping dauerhaft in Cloud sichern"):
                     with st.spinner("Synchronisiere mit Supabase..."):
+                        # Alle Spaltennamen im df_map säubern
+                        df_map.columns = [str(c).strip() for c in df_map.columns]
+                        k_map = next((c for c in df_map.columns if 'konto' in str(c).lower()), df_map.columns[0])
+                        
                         for _, row in df_map.iterrows():
-                            m_data = {"konto_nr": str(row.iloc)}
+                            m_data = {"konto_nr": str(row[k_map]).strip().replace('.0', '')}
                             for i in range(1, 8):
                                 m_data[f"ausweis_{i}"] = str(row.get(f"Ausweis_{i}", "Nicht zugeordnet"))
-                            supabase.table("master_mapping").upsert(m_data).execute()
-                    st.success("Erfolgreich in Cloud gespeichert!")
-                    st.rerun() # Sorgt dafür, dass die Tabelle sofort angezeigt wird
- 
+                            try:
+                                supabase.table("master_mapping").upsert(m_data).execute()
+                            except Exception as e:
+                                st.error(f"Fehler bei Konto {row[k_map]}: {e}")
+                        st.success("Erfolgreich in Cloud gespeichert!")
+                        st.rerun()
             else:
                 # Automatisches Laden aus Supabase
                 with st.spinner("Lade Master-Mapping aus der Cloud..."):
@@ -102,23 +108,14 @@ elif phase == "3: Zahlen hochladen (SuSa)":
                         df_map = df_map.rename(columns={'konto_nr': k_susa})
                         for i in range(1, 8):
                             df_map = df_map.rename(columns={f'ausweis_{i}': f'Ausweis_{i}'})
-                        st.success("Mapping aus der Cloud geladen!")
+                        st.success("Master-Mapping aus der Cloud geladen!")
                     else:
                         st.warning("Kein Mapping in der Cloud gefunden. Bitte Excel hochladen.")
 
-            # --- VERARBEITUNG ---
-                       # --- VERARBEITUNG (ROBUSTER JOIN) ---
-            if 'df_map' in locals() and k_susa in df_map.columns:
-                # Sicherstellen, dass beide Kontospalten den gleichen Typ haben (String)
-                df_susa[k_susa] = df_susa[k_susa].astype(str).str.strip()
+            # Zusammenführung der Daten
+            if 'df_map' in locals() and not df_map.empty:
                 df_map[k_susa] = df_map[k_susa].astype(str).str.strip()
-                
                 df_final = pd.merge(df_susa, df_map, on=k_susa, how='left')
-                
-                # ... (Rest des Codes wie bisher)
-            else:
-                st.error("Fehler: Die Kontospalte wurde im Mapping-File nicht gefunden. Bitte Upload-Reihenfolge prüfen!")
-
                 
                 # Klärungsposten-Logik
                 ausweis_cols = [c for c in df_final.columns if 'Ausweis' in str(c)]
@@ -135,17 +132,17 @@ elif phase == "3: Zahlen hochladen (SuSa)":
                 st.dataframe(df_final.head(10))
 
 elif phase == "4: Prüfen & Optimieren":
-    st.header("Phase 4: Lücken-Analyse & Qualitätssicherung")
+    st.header("Phase 4: Lücken-Analyse")
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data']
         a1_col = next((c for c in df.columns if 'Ausweis_1' in str(c)), None)
         if a1_col:
             luecken = df[df[a1_col] == "9. KLÄRUNGSPOSTEN (Mapping fehlt)"]
             if not luecken.empty:
-                st.error(f"Gefunden: {len(luecken)} Konten ohne Zuordnung!")
+                st.error(f"Gefunden: {len(luecken)} Konten ohne Zuordnung im Master.")
                 st.dataframe(luecken)
             else:
-                st.success("Hervorragend! Alle Konten sind korrekt zugeordnet.")
+                st.success("Alle Konten sind erfolgreich zugeordnet.")
     else:
         st.warning("Bitte laden Sie in Phase 3 erst die Dateien hoch.")
 
@@ -153,7 +150,6 @@ elif phase == "5: Abschluss prüfen":
     st.header("Phase 5: Struktur-Bilanz")
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data'].copy()
-        # Spaltennamen für Streamlit-Formatierung säubern
         df.columns = [str(c).strip() for c in df.columns]
         ausweis_cols = [c for c in df.columns if 'Ausweis' in c]
         wert_cols = [c for c in df.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
@@ -161,8 +157,7 @@ elif phase == "5: Abschluss prüfen":
         if ausweis_cols and wert_cols:
             pivot = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
             st.dataframe(pivot, use_container_width=True)
-            # Bilanzsumme des aktuellen Jahres
-            st.metric("Vorläufige Bilanzsumme (Saldo)", f"{pivot[wert_cols[-1]].sum():,.2f} €")
+            st.metric("Vorläufiger Saldo 2025 (Sollte 0 sein)", f"{pivot[wert_cols[-1]].sum():,.2f} €")
     else:
         st.warning("Keine Daten vorhanden.")
 
@@ -175,7 +170,6 @@ elif phase == "6: Export & Versand":
         
         export_df = df.groupby(ausweis_cols[:5])[wert_cols].sum().reset_index()
         
-        # EXCEL EXPORT
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
             export_df.to_excel(writer, index=False, sheet_name='LUMINA_Abschluss')
@@ -186,27 +180,8 @@ elif phase == "6: Export & Versand":
             file_name="LUMINA_Abschluss.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-        
-        # PDF EXPORT (Protokoll)
-        from fpdf import FPDF
-        if st.button("📄 PDF-Vorschau generieren"):
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", "B", 14)
-            pdf.cell(0, 10, "LUMINA Abschlussbericht 2025", ln=True, align='C')
-            pdf.set_font("Arial", size=8)
-            pdf.ln(5)
-            for _, row in export_df.head(40).iterrows():
-                txt = f"{row.iloc} | {row.iloc} | {row[wert_cols[-1]]:,.2f} EUR"
-                pdf.cell(0, 7, txt.encode('latin-1', 'replace').decode('latin-1'), border=1, ln=True)
-            
-            st.download_button(
-                label="Jetzt PDF herunterladen",
-                data=bytes(pdf.output()),
-                file_name="LUMINA_Protokoll.pdf",
-                mime="application/pdf"
-            )
         st.balloons()
+
 
 
 
