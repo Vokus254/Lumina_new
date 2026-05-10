@@ -530,6 +530,15 @@ def format_percent(value) -> str:
     return f"{float(value):,.1f} %".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def clean_ai_output(text: str) -> str:
+    cleaned = text or ""
+    cleaned = cleaned.replace("**", "")
+    cleaned = re.sub(r"^#{1,6}\s*", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"^\s*[-*]\s+", "- ", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 def variance_display(df: pd.DataFrame):
     display_cols = [c for c in df.columns if c != "Veränderung_abs"]
     formatters = {
@@ -664,6 +673,11 @@ Adressat: {ai_config.get('audience', 'Geschäftsführung und Wirtschaftsprüfer'
 Ton/Stil: {ai_config.get('tone', 'prüferfreundlich, vorsichtig, sachlich, konservativ')}.
 Textumfang: {ai_config.get('length', 'mittel')}.
 Form: {ai_config.get('form', 'gegliederte Abschnitte')}.
+Formatierung:
+- Verwende klare Überschriften ohne Markdown-Formatzeichen.
+- Verwende keine Sternchen zur Hervorhebung.
+- Verwende kurze Absätze und saubere Aufzählungen.
+- Zahlen und Währungen bitte lesbar in deutscher Schreibweise wiedergeben.
 """
 
     try:
@@ -671,7 +685,7 @@ Form: {ai_config.get('form', 'gegliederte Abschnitte')}.
         if model.startswith(("gpt-4", "gpt-4o")):
             kwargs["temperature"] = temperature
         response = client.responses.create(**kwargs)
-        return response.output_text, None
+        return clean_ai_output(response.output_text), None
     except Exception as e:
         return None, f"OpenAI-Anfrage fehlgeschlagen: {e}"
 
@@ -1516,7 +1530,10 @@ elif phase == "6 Interpretation":
                         st.success("Interpretationsentwurf erstellt.")
 
                 if st.session_state.ai_interpretation:
-                    st.text_area("OpenAI-Entwurf", st.session_state.ai_interpretation, height=520)
+                    st.markdown("### OpenAI-Entwurf")
+                    st.markdown(st.session_state.ai_interpretation)
+                    with st.expander("Textversion anzeigen"):
+                        st.text_area("OpenAI-Entwurf als Text", st.session_state.ai_interpretation, height=420)
                     st.download_button(
                         "OpenAI-Entwurf herunterladen",
                         data=st.session_state.ai_interpretation.encode("utf-8"),
