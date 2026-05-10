@@ -246,10 +246,10 @@ def is_clarification_value(value) -> bool:
 
 def clarification_mask(df: pd.DataFrame) -> pd.Series:
     mask = df.get("Mapping_Status", pd.Series("", index=df.index)).eq("Klärung")
-    for i in range(1, 8):
-        col = f"Ausweis_{i}"
-        if col in df.columns:
-            mask = mask | df[col].apply(is_clarification_value)
+    if "Ausweis_1" in df.columns:
+        mask = mask | df["Ausweis_1"].apply(is_clarification_value)
+    if any(f"Ausweis_{i}" in df.columns for i in range(1, 8)):
+        mask = mask | df.apply(is_unassigned_mapping, axis=1)
     return mask
 
 
@@ -344,6 +344,11 @@ def normalize_mapping(df: pd.DataFrame) -> pd.DataFrame:
             out[col] = ""
         out[col] = out[col].fillna("").astype(str).str.strip()
 
+    assigned_mask = ~out["Ausweis_1"].isin(["", KLARUNG])
+    for i in range(2, 8):
+        col = f"Ausweis_{i}"
+        out.loc[assigned_mask & (out[col] == KLARUNG), col] = ""
+
     out = out[out["KontoNr"] != ""].copy()
     out = out.drop_duplicates(subset=["KontoNr"], keep="last")
     return out[["KontoNr"] + [f"Ausweis_{i}" for i in range(1, 8)]]
@@ -360,24 +365,34 @@ def apply_mapping(susa: pd.DataFrame, mapping: pd.DataFrame) -> pd.DataFrame:
 
     for i in range(1, 8):
         col = f"Ausweis_{i}"
-        mapped[col] = mapped[col].replace("", pd.NA).fillna(KLARUNG)
+        mapped[col] = mapped[col].fillna("").astype(str).str.strip()
 
     for idx, row in mapped.iterrows():
-        if row["Mapping_Status"] != "Klärung" and not is_unassigned_mapping(row):
+        needs_clarification = row["Mapping_Status"] == "Klärung" or is_unassigned_mapping(row)
+        if not needs_clarification:
+            for i in range(2, 8):
+                col = f"Ausweis_{i}"
+                if mapped.at[idx, col] == KLARUNG:
+                    mapped.at[idx, col] = ""
             continue
+
         fallback = builtin_mapping_for(row["KontoNr"])
-        if not fallback:
+        if fallback:
+            for i in range(1, 8):
+                col = f"Ausweis_{i}"
+                value = fallback.get(col, "")
+                if value:
+                    mapped.at[idx, col] = value
+                elif mapped.at[idx, col] in ["", KLARUNG]:
+                    mapped.at[idx, col] = "Vorschlag offen"
+            mapped.at[idx, "Mapping_Status"] = "Vorschlag"
             continue
+
         for i in range(1, 8):
             col = f"Ausweis_{i}"
-            value = fallback.get(col, "")
-            if value:
-                mapped.at[idx, col] = value
-            elif mapped.at[idx, col] == KLARUNG:
-                mapped.at[idx, col] = "Vorschlag offen"
-        mapped.at[idx, "Mapping_Status"] = "Vorschlag"
-
-    mapped.loc[clarification_mask(mapped), "Mapping_Status"] = "Klärung"
+            if mapped.at[idx, col] == "":
+                mapped.at[idx, col] = KLARUNG
+        mapped.at[idx, "Mapping_Status"] = "Klärung"
 
     return mapped
 
