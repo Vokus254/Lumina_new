@@ -122,33 +122,45 @@ elif phase == "4: Prüfen & Optimieren":
 
 
 elif phase == "5: Abschluss prüfen":
-    st.header("Phase 5: Die Generalprobe (Bilanz-Vorschau)")
+    st.header("Phase 5: Die Generalprobe (Struktur-Bilanz)")
     
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data']
         
-        # Wir filtern die Konten, die zugeordnet sind
-        gemappt = df[df['Ausweis_4'] != "Nicht zugeordnet"]
+        # 1. Saldo-Spalte automatisch finden
+        saldo_col = next((c for c in df.columns if any(x in str(c) for x in ['2025', 'Saldo', '31.12'])), None)
         
-        st.subheader("Aggregierte Bilanzstruktur (HGB)")
-        
-        # Gruppierung nach Ausweis-Ebene 4 und 5
-        # Wir nehmen an, der Saldo steht in der 3. Spalte (Index 2)
-        saldo_col = df.columns[2] 
-        
-        bilanz_view = gemappt.groupby(['Ausweis_4', 'Ausweis_5'])[saldo_col].sum().reset_index()
-        bilanz_view.columns = ['HGB-Bereich', 'Einzelposition', 'Betrag (€)']
-        
-        # Anzeige als Tabelle
-        st.table(bilanz_view.style.format({'Betrag (€)': '{:,.2f}'}))
-        
-        # Berechnung der Bilanzsumme (der zugeordneten Konten)
-        bilanzsumme = bilanz_view['Betrag (€)'].sum()
-        st.metric("Vorläufige Bilanzsumme (Aktiva)", f"{bilanzsumme:,.2f} €")
-        
-        st.success("Alle Korrekturen aus Phase 4 wurden berücksichtigt.")
+        if saldo_col:
+            st.subheader("Aggregierte HGB-Struktur")
+            
+            # 2. Gruppierung über die Ebenen (z.B. Ausweis 3, 4 und 5)
+            # Wir nehmen nur die Konten, die zugeordnet sind
+            ausweis_cols = [c for c in df.columns if 'Ausweis' in str(c)]
+            levels = ausweis_cols[:3] # Wir starten mit den ersten 3 Ebenen zur Übersicht
+            
+            gemappt = df[df[ausweis_cols[0]].fillna("Nicht zugeordnet") != "Nicht zugeordnet"]
+            
+            if not gemappt.empty:
+                # Hierarchische Summe bilden
+                pivot = gemappt.groupby(levels)[saldo_col].sum().reset_index()
+                
+                # Schöne Tabelle anzeigen
+                st.dataframe(
+                    pivot,
+                    column_config={saldo_col: st.column_config.NumberColumn("Saldo (€)", format="%.2f €")},
+                    hide_index=True,
+                    use_container_width=True
+                )
+                
+                # 3. Gesamtsumme (Aktiva-Check)
+                gesamt = gemappt[saldo_col].sum()
+                st.metric("Vorläufige Bilanzsumme (gemappt)", f"{gesamt:,.2f} €")
+            else:
+                st.warning("Noch keine Konten erfolgreich gemappt.")
+        else:
+            st.error("Keine Saldo-Spalte für die Berechnung gefunden.")
     else:
-        st.warning("Bitte laden Sie in Phase 3 eine SuSa hoch.")
+        st.warning("Bitte laden Sie in Phase 3 die Dateien hoch.")
 
 
 elif phase == "6: Export & Versand":
