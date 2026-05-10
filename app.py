@@ -41,20 +41,27 @@ elif phase == "3: Zahlen hochladen (SuSa)":
     if uploaded_file:
         import pandas as pd
         df = pd.read_excel(uploaded_file)
-        mapping_tabelle = get_hgb_mapping("SKR03")
         
-        # Die Magie: Wir ordnen jedem Konto die HGB-Position zu
-        # Wir nehmen an, die Spalte heißt 'KontoNr' (wie in deinem Screenshot)
-        df['HGB_Position'] = df['KontoNr'].astype(str).map(mapping_tabelle)
+        # --- INTELLIGENTE SPALTENSUCHE ---
+        # Wir suchen die Spalte, die 'konto' im Namen hat
+        col_map = {col: col.lower() for col in df.columns}
+        konto_col = next((orig for orig, low in col_map.items() if 'konto' in low), None)
         
-        st.session_state['susa_data'] = df
-        st.success("Mapping abgeschlossen!")
-        
-        # Zeige nur die Konten, die wir erkannt haben
-        erkannt = df[df['HGB_Position'].notna()]
-        st.dataframe(erkannt[['KontoNr', 'Kontobezeichnung', 'HGB_Position']])
-        
-        st.info(f"LUMINA hat {len(erkannt)} Konten automatisch den HGB-Posten zugeordnet.")
+        if konto_col:
+            mapping_tabelle = get_hgb_mapping("SKR03")
+            # Mapping durchführen
+            df['HGB_Position'] = df[konto_col].astype(str).map(mapping_tabelle)
+            
+            st.session_state['susa_data'] = df
+            st.success(f"Spalte '{konto_col}' erkannt und gemappt!")
+            
+            # Nur Zeilen mit Treffern anzeigen
+            erkannt = df[df['HGB_Position'].notna()]
+            st.dataframe(erkannt[[konto_col, 'HGB_Position']])
+        else:
+            st.error("Konnte keine Spalte mit 'Konto' im Namen finden. Vorhanden: " + ", ".join(df.columns))
+            st.info("Bitte stellen Sie sicher, dass eine Spalte 'KontoNr' oder ähnlich heißt.")
+
 
 
 elif phase == "4: Prüfen & Optimieren":
