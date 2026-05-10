@@ -82,27 +82,48 @@ elif phase == "3: Zahlen hochladen (SuSa)":
 
 
 elif phase == "4: Prüfen & Optimieren":
-    st.header("Phase 4: Das Herzstück")
+    st.header("Phase 4: Das Herzstück (Smart Interview)")
     
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data']
-        # Wir suchen nach Forderungen (SKR03: Kontenbereich 1400)
-        # Das ist nur ein Beispiel-Filter:
-        forderungen_summe = 45000.00 # Hier käme später die Summen-Logik aus dem DF
         
-        st.subheader("Karteikarte: Forderungen")
-        st.write(f"Aktueller Saldo laut SuSa: **{forderungen_summe:,.2f} €**")
+        # 1. Daten-Gruppierung (Summierung der Sachanlagen)
+        sachanlagen_liste = ["Grundstücke mit Betriebsbauten", "Betriebsbauten auf fremden Grundstücken", "Außenanlagen", "Technische Anlagen und Maschinen"]
+        sachanlagen_df = df[df['HGB_Position'].isin(sachanlagen_liste)]
         
-        frage = st.radio(
-            "Gibt es offene Rechnungen, bei denen Sie glauben, dass der Kunde gar nicht mehr zahlt?",
-            ["Nein, alles sicher", "Ja, es gibt Ausfallrisiken"]
+        # Wir nehmen an, die Saldo-Spalte heißt bei dir jetzt 'Saldo 2025' (aus der Anzeige-Logik)
+        # Falls der Fehler auftritt, nutzen wir die 3. Spalte
+        saldo_col = df.columns[2] 
+        summe_sachanlagen = sachanlagen_df[saldo_col].sum()
+
+        # 2. Das Smart-Interview-Modul
+        st.subheader("Modul: Sachanlagen")
+        st.write(f"LUMINA hat Sachanlagen im Wert von **{summe_sachanlagen:,.2f} €** identifiziert.")
+        
+        check_afa = st.radio(
+            "Wurden die planmäßigen Abschreibungen für das Geschäftsjahr 2025 bereits vollständig gebucht?",
+            ["Ja, alles aktuell", "Nein, muss noch berechnet werden", "Teilweise / Unsicher"]
         )
         
-        if frage == "Ja, es gibt Ausfallrisiken":
-            betrag = st.number_input("Welcher Betrag ist gefährdet? (in €)", min_value=0.0, value=1000.0)
-            st.warning(f"LUMINA wird eine Einzelwertberichtigung über {betrag:,.2f} € im Hintergrund vorbereiten.")
-            # Hier loggen wir für den Audit Trail in Phase 5
-            st.session_state['korrektur_ewb'] = betrag
+        if check_afa == "Nein, muss noch berechnet werden":
+            st.warning("Aktion empfohlen: LUMINA kann einen Abschreibungsplan basierend auf den Vorjahreswerten vorschlagen.")
+            if st.button("Vorschlag generieren"):
+                st.info("Simulation: Erwarte Abschreibung von ca. 45.300 € (basierend auf 2% AfA).")
+
+        st.divider()
+
+        # 3. Modul: Forderungen
+        forderungen_df = df[df['HGB_Position'].str.contains("Forderungen", na=False)]
+        summe_ford = forderungen_df[saldo_col].sum()
+        
+        st.subheader("Modul: Forderungsmanagement")
+        st.write(f"Offene Forderungen gesamt: **{summe_ford:,.2f} €**")
+        
+        st.multiselect(
+            "Gibt es bei folgenden Trägern bekannte Zahlungsschwierigkeiten?",
+            forderungen_df['HGB_Position'].unique()
+        )
+        
     else:
         st.warning("Bitte laden Sie zuerst in Phase 3 eine SuSa hoch!")
 
