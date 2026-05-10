@@ -56,16 +56,36 @@ elif phase == "3: Zahlen hochladen (SuSa)":
         st.dataframe(df[['KontoNr', 'Kontobezeichnung', 'Ausweis_4', 'Ausweis_5', 'Ausweis_7']], hide_index=True)
 
 elif phase == "4: Prüfen & Optimieren":
-    st.header("Phase 4: Smart Interview")
+    st.header("Phase 4: Smart Interview & Nachmapping")
     if 'susa_data' in st.session_state:
         df = st.session_state['susa_data']
-        st.subheader("Offene To-Dos")
-        nicht_zugeordnet = df[df['Ausweis_4'] == "Nicht zugeordnet"]
-        if not nicht_zugeordnet.empty:
-            st.warning(f"Achtung: {len(nicht_zugeordnet)} Konten sind noch keiner HGB-Position zugeordnet.")
-            st.dataframe(nicht_zugeordnet[['KontoNr', 'Kontobezeichnung']])
+        
+        # 1. Unbekannte Konten finden
+        offen = df[df['Ausweis_4'] == "Nicht zugeordnet"]
+        
+        if not offen.empty:
+            st.warning(f"Es gibt noch {len(offen)} Konten ohne HGB-Zuordnung.")
+            
+            with st.expander("Jetzt nachmappen"):
+                auswahl_konto = st.selectbox("Konto wählen:", offen['KontoNr'] + " - " + offen['Kontobezeichnung'])
+                neue_pos = st.selectbox("Zuordnen zu (Ebene 4):", ["Sachanlagen", "Umlaufvermögen", "Rechnungsabgrenzung"])
+                
+                if st.button("Zuordnung speichern"):
+                    # Logik: Im echten System würden wir das jetzt in einer DB oder im SessionState speichern
+                    st.success(f"Konto {auswahl_konto} wurde vorläufig als '{neue_pos}' markiert.")
+        
+        st.divider()
+        
+        # 2. Fachliche Prüfung: Sachanlagen (Beispiel)
+        sachanlagen = df[df['Ausweis_4'] == "Sachanlagen"]
+        if not sachanlagen.empty:
+            st.subheader("Fokus: Sachanlagen")
+            wert = sachanlagen.iloc[:, 2].sum() # Nimmt den Saldo aus der 3. Spalte
+            st.write(f"Gesamtwert Sachanlagen: **{wert:,.2f} €**")
+            st.checkbox("Sind alle Anlagenzugänge 2025 bereits erfasst?")
     else:
         st.warning("Bitte laden Sie in Phase 3 eine SuSa hoch.")
+
 
 elif phase == "5: Abschluss prüfen":
     st.header("Phase 5: Die Generalprobe")
