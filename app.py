@@ -1,16 +1,28 @@
 import streamlit as st
+import pandas as pd
 from supabase import create_client, Client
 
-# --- DATENBANK VERBINDUNG ---
-# Diese Werte legst du in Streamlit Cloud unter "Settings" -> "Secrets" an
-url = st.secrets["SUPABASE_URL"]
-key = st.secrets["SUPABASE_KEY"]
-supabase: Client = create_client(url, key)
+# 1. DATENBANK-VERBINDUNG (Ganz oben)
+try:
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    supabase: Client = create_client(url, key)
+except Exception as e:
+    st.error("Datenbank-Verbindung fehlgeschlagen. Bitte Secrets prüfen!")
 
-# Funktion zum Laden des Mappings aus der DB
-def load_mapping_from_db():
-    response = supabase.table("master_mapping").select("*").execute()
-    return pd.DataFrame(response.data)
+# 2. NAVIGATION (Definiert die Variable 'phase')
+st.sidebar.title("LUMINA Navigation")
+phase = st.sidebar.radio(
+    "Aktuelle Phase:",
+    ["1: Willkommen", "2: Unternehmen verstehen", "3: Zahlen hochladen (SuSa)", 
+     "4: Prüfen & Optimieren", "5: Abschluss prüfen", "6: Export & Versand"]
+)
+
+# 3. HIER GEHT ES WEITER MIT DEINER LOGIK
+if phase == "1: Willkommen":
+    st.header("Willkommen bei LUMINA")
+    # ... Rest des Codes
+
 
 # --- IN PHASE 3: SPEICHERN BEIM UPLOAD ---
 if phase == "3: Zahlen hochladen (SuSa)":
