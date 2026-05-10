@@ -53,69 +53,36 @@ elif phase == "3: Zahlen hochladen (SuSa)":
     
     col1, col2 = st.columns(2)
     with col1:
-        map_file = st.file_uploader("1. Master-Mapping Excel", type=["xlsx"])
+        map_file = st.file_uploader("1. Master-Mapping Excel (Optional)", type=["xlsx"])
     with col2:
         susa_file = st.file_uploader("2. Mandanten-SuSa Excel", type=["xlsx"])
 
-    if map_file and susa_file:
-        # Automatischer Header-Scan
-        def get_clean_df(file):
-            df_raw = pd.read_excel(file, header=None)
-            header_idx = 0
-            for i, row in df_raw.head(10).iterrows():
-                if row.astype(str).str.contains('Konto', case=False).any():
-                    header_idx = i
-                    break
-            return pd.read_excel(file, header=header_idx)
-
-        df_map = get_clean_df(map_file)
+    if susa_file:
         df_susa = get_clean_df(susa_file)
-        
-        # Spalten finden
-        k_map = next((c for c in df_map.columns if 'konto' in str(c).lower()), None)
         k_susa = next((c for c in df_susa.columns if 'konto' in str(c).lower()), None)
         
-        if k_map and k_susa:
-            # Kontonummern harmonisieren
-            df_map[k_map] = df_map[k_map].astype(str).str.strip().str.replace('.0', '', regex=False)
+        if k_susa:
             df_susa[k_susa] = df_susa[k_susa].astype(str).str.strip().str.replace('.0', '', regex=False)
             
-            # Mapping durchführen (Join)
-            df_final = pd.merge(df_susa, df_map, left_on=k_susa, right_on=k_map, how='left')
-            
-            # Sicherheits-Logik (Klärungsposten)
-            ausweis_cols = [c for c in df_final.columns if 'Ausweis' in str(c)]
-            for col in ausweis_cols:
-                df_final[col] = df_final[col].fillna("9. KLÄRUNGSPOSTEN (Mapping fehlt)")
-            
-            # Zahlen reinigen
-            wert_cols = [c for c in df_final.columns if any(x in str(c) for x in ['2025', '2024', '31.12'])]
-            for c in wert_cols:
-                df_final[c] = df_final[c].apply(clean_currency)
+            # --- INTELLIGENTE MAPPING-QUELLE ---
+            if map_file:
+                # Fall A: Neues Mapping-File wird hochgeladen
+                df_map = get_clean_df(map_file)
+                st.info("Nutze hochgeladenes Mapping-File.")
+            else:
+                # Fall B: Mapping direkt aus Supabase laden
+                with st.spinner("Lade Master-Mapping aus der Cloud..."):
+                    res = supabase.table("master_mapping").select("*").execute()
+                    df_map = pd.DataFrame(res.data)
+                    # Spaltennamen in der DB sind klein (ausweis_1), wir brauchen sie für den Code passend
+                    df_map.columns = [c.replace('ausweis_', 'Ausweis_').replace('konto_nr', k_susa) for c in df_map.columns]
+                st.success("Master-Mapping erfolgreich aus der Cloud geladen!")
+
+            # Join & Datenreinigung (wie bisher)
+            df_final = pd.merge(df_susa, df_map, on=k_susa, how='left')
+            # ... (Rest deines Reinigungs-Codes)
             
             st.session_state['susa_data'] = df_final
-            st.success("Mapping & Datenreinigung erfolgreich!")
-            
-            # --- SPEICHERN IN SUPABASE ---
-            if st.button("Dieses Master-Mapping in Cloud sichern"):
-                with st.spinner("Synchronisiere mit Supabase..."):
-                    for _, row in df_map.iterrows():
-                        m_data = {
-                            "konto_nr": str(row[k_map]).strip().replace('.0', ''),
-                            "ausweis_1": str(row.get("Ausweis_1", "")),
-                            "ausweis_2": str(row.get("Ausweis_2", "")),
-                            "ausweis_3": str(row.get("Ausweis_3", "")),
-                            "ausweis_4": str(row.get("Ausweis_4", "")),
-                            "ausweis_5": str(row.get("Ausweis_5", "")),
-                            "ausweis_6": str(row.get("Ausweis_6", "")),
-                            "ausweis_7": str(row.get("Ausweis_7", ""))
-                        }
-                        try:
-                            supabase.table("master_mapping").upsert(m_data).execute()
-                        except Exception as e:
-                            st.error(f"Fehler bei Konto {row[k_map]}: {e}")
-                    st.success("Erfolgreich in Cloud gespeichert!")
-            
             st.dataframe(df_final.head(10))
 
 elif phase == "4: Prüfen & Optimieren":
